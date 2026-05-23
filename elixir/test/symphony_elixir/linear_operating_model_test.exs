@@ -37,6 +37,7 @@ defmodule SymphonyElixir.Linear.OperatingModelTest do
     assert %{
              "repo_metadata" => %{
                "representation" => "metadata",
+               "full_sync_allowed" => true,
                "labels" => ["repo:homelab"],
                "custom_fields" => %{"github_repository" => "BrianSeong99/homelab"}
              }
@@ -70,6 +71,8 @@ defmodule SymphonyElixir.Linear.OperatingModelTest do
     assert {:ok, model} = OperatingModel.load_file(@config_path)
 
     assert :ok = OperatingModel.validate_project_sync_profile(model, "homelab-runtime", "native-full-sync")
+    assert get_in(model, ["outcome_projects", "homelab-runtime", "repo_metadata", "full_sync_allowed"]) == true
+    refute get_in(model, ["outcome_projects", "guardian-launch", "repo_metadata", "full_sync_allowed"]) == true
   end
 
   test "rejects unknown domains and repo-as-project defaults" do
