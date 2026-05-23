@@ -1,0 +1,43 @@
+version: 1
+milestone_types:
+  - key: project-roadmap
+    summary: "Longer-running project direction and sequencing."
+    required_checkpoints:
+      - planning_review
+      - midpoint_health_check
+      - final_validation_review
+  - key: release
+    summary: "Release readiness and launch-critical completion."
+    required_checkpoints:
+      - planning_review
+      - midpoint_health_check
+      - final_validation_review
+  - key: integration
+    summary: "Cross-repo or external partner integration milestone."
+    required_checkpoints:
+      - planning_review
+      - midpoint_health_check
+      - final_validation_review
+  - key: sprint
+    summary: "Short execution window with bounded issue set."
+    required_checkpoints:
+      - planning_review
+      - midpoint_health_check
+      - final_validation_review
+  - key: research-track
+    summary: "Research stream that produces decisions and follow-up issues."
+    required_checkpoints:
+      - planning_review
+      - final_validation_review
+  - key: ops-maintenance
+    summary: "Operational maintenance and reliability work."
+    required_checkpoints:
+      - planning_review
+      - final_validation_review
+  - key: launch-critical
+    summary: "High-risk launch path with strict human checkpoints."
+    required_checkpoints:
+      - planning_review
+      - midpoint_health_check
+      - final_validation_review
+      - launch_approval
