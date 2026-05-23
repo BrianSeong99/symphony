@@ -1,10 +1,11 @@
 defmodule SymphonyElixirWeb.DashboardLive do
   @moduledoc """
-  Live observability dashboard for Symphony.
+  Private runtime console for Symphony.
   """
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
+  alias SymphonyElixir.RuntimeConsole.Api
   alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
   @runtime_tick_ms 1_000
 
@@ -13,6 +14,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
     socket =
       socket
       |> assign(:payload, load_payload())
+      |> assign(:runtime_console, load_runtime_console())
       |> assign(:now, DateTime.utc_now())
 
     if connected?(socket) do
@@ -34,6 +36,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:payload, load_payload())
+     |> assign(:runtime_console, load_runtime_console())
      |> assign(:now, DateTime.utc_now())}
   end
 
@@ -45,13 +48,13 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <div class="hero-grid">
           <div>
             <p class="eyebrow">
-              Symphony Observability
+              Symphony Runtime Console
             </p>
             <h1 class="hero-title">
-              Operations Dashboard
+              Private Automation Kernel
             </h1>
             <p class="hero-copy">
-              Current state, retry pressure, token usage, and orchestration health for the active Symphony runtime.
+              Agents, queues, dependency gates, relay policy, and private runtime memory for unattended Symphony operation.
             </p>
           </div>
 
@@ -78,6 +81,13 @@ defmodule SymphonyElixirWeb.DashboardLive do
           </p>
         </section>
       <% else %>
+        <nav class="runtime-nav" aria-label="Runtime console views">
+          <a :for={view <- runtime_views()} href={view.href} class="runtime-nav-item">
+            <span class="runtime-nav-label"><%= view.label %></span>
+            <span class="runtime-nav-detail"><%= view.detail %></span>
+          </a>
+        </nav>
+
         <section class="metric-grid">
           <article class="metric-card">
             <p class="metric-label">Running</p>
@@ -110,6 +120,107 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <p class="metric-value numeric"><%= format_runtime_seconds(total_runtime_seconds(@payload, @now)) %></p>
             <p class="metric-detail">Total Codex runtime across completed and active sessions.</p>
           </article>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Runtime console</h2>
+              <p class="section-copy">Local Symphony state is canonical; Linear and GitHub are downstream surfaces.</p>
+            </div>
+          </div>
+
+          <div class="runtime-panel-grid">
+            <article class="runtime-panel">
+              <p class="runtime-panel-label">Projects</p>
+              <p class="runtime-panel-value numeric"><%= @runtime_console.projects.count %></p>
+              <p class="runtime-panel-copy">Outcome projects from the central operating model.</p>
+            </article>
+
+            <article class="runtime-panel">
+              <p class="runtime-panel-label">Policies</p>
+              <p class="runtime-panel-value numeric"><%= length(@runtime_console.policies.projection_templates) %></p>
+              <p class="runtime-panel-copy">Projection templates and field ownership profiles.</p>
+            </article>
+
+            <article class="runtime-panel">
+              <p class="runtime-panel-label">Relay events</p>
+              <p class="runtime-panel-value numeric"><%= @runtime_console.relay_events.count %></p>
+              <p class="runtime-panel-copy">Linear/GitHub relay activity kept inside Symphony.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Project connections</h2>
+              <p class="section-copy">Linear projects map to outcomes; repos stay metadata or downstream links.</p>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table" style="min-width: 780px;">
+              <thead>
+                <tr>
+                  <th>Outcome</th>
+                  <th>Domain</th>
+                  <th>Linear</th>
+                  <th>Sync</th>
+                  <th>Repo metadata</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr :for={project <- Enum.take(@runtime_console.projects.projects, 6)}>
+                  <td><span class="issue-id"><%= project.name %></span></td>
+                  <td><%= project.operating_domain %></td>
+                  <td class="mono"><%= project.linear_project_key %></td>
+                  <td><span class="state-badge"><%= project.sync_profile %></span></td>
+                  <td><%= repo_metadata_summary(project.repo_metadata) %></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Private Symphony state</h2>
+              <p class="section-copy">Workpads, agent memory, and private notes stay inside Symphony.</p>
+            </div>
+          </div>
+
+          <%= if @runtime_console.issues.items == [] do %>
+            <p class="empty-state">No local runtime issue records are attached to this console snapshot.</p>
+          <% else %>
+            <div class="private-state-grid">
+              <article :for={issue <- @runtime_console.issues.items} class="private-state-panel">
+                <div class="private-state-header">
+                  <div>
+                    <p class="runtime-panel-label">Issue</p>
+                    <h3 class="private-state-title"><%= runtime_issue_title(issue) %></h3>
+                  </div>
+                  <div class="link-row">
+                    <a :for={link <- external_link_items(issue)} href={link.href} class="link-chip"><%= link.label %></a>
+                  </div>
+                </div>
+
+                <div class="private-state-columns">
+                  <div>
+                    <p class="runtime-panel-label">Workpad</p>
+                    <p class="private-state-copy"><%= map_get(issue, :workpad) || "Private workpad unavailable." %></p>
+                  </div>
+                  <div>
+                    <p class="runtime-panel-label">Agent memory</p>
+                    <p class="private-state-copy"><%= map_get(issue, :agent_memory) || "No active memory snapshot." %></p>
+                  </div>
+                </div>
+
+                <pre class="code-panel projection-panel"><%= pretty_value(map_get(issue, :projection_decisions, %{})) %></pre>
+              </article>
+            </div>
+          <% end %>
         </section>
 
         <section class="section-card">
@@ -332,6 +443,68 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp load_payload do
     Presenter.state_payload(orchestrator(), snapshot_timeout_ms())
   end
+
+  defp load_runtime_console do
+    opts = [runtime_state: Endpoint.config(:runtime_console_state) || %{}]
+
+    %{
+      health: Api.health(opts),
+      projects: Api.projects(opts),
+      policies: Api.policies(opts),
+      issues: Api.resource(:issues, opts),
+      relay_events: Api.resource(:relay_events, opts)
+    }
+  end
+
+  defp runtime_views do
+    [
+      %{label: "Runs", detail: "active work", href: "/api/v1/runtime/runs"},
+      %{label: "Agents", detail: "sessions", href: "/api/v1/runtime/agents"},
+      %{label: "Dependency Graph", detail: "DAG gates", href: "/api/v1/runtime/dependencies"},
+      %{label: "Blocked", detail: "checkpoints", href: "/api/v1/runtime/checkpoints"},
+      %{label: "Reviews", detail: "repair loop", href: "/api/v1/runtime/reviews"},
+      %{label: "Policies", detail: "projection", href: "/api/v1/runtime/policies"},
+      %{label: "Relay", detail: "events", href: "/api/v1/runtime/relay/events"},
+      %{label: "Simulation", detail: "safety", href: "/api/v1/runtime/projection-preview"},
+      %{label: "Learning", detail: "rules", href: "/api/v1/runtime/policies"},
+      %{label: "Research", detail: "corpus", href: "/api/v1/runtime/policies"},
+      %{label: "Health", detail: "service", href: "/api/v1/runtime/health"},
+      %{label: "Settings", detail: "config", href: "/api/v1/runtime/projects"}
+    ]
+  end
+
+  defp runtime_issue_title(issue), do: map_get(issue, :title) || map_get(issue, :identifier) || map_get(issue, :id) || "Untitled"
+
+  defp external_link_items(issue) do
+    [
+      {:linear_url, "Linear"},
+      {:github_issue_url, "GitHub issue"},
+      {:github_pr_url, "GitHub PR"}
+    ]
+    |> Enum.flat_map(fn {key, label} ->
+      case map_get(issue, key) do
+        href when is_binary(href) and href != "" -> [%{label: label, href: href}]
+        _ -> []
+      end
+    end)
+  end
+
+  defp repo_metadata_summary(metadata) when is_map(metadata) do
+    metadata
+    |> map_get(:labels, [])
+    |> Enum.join(", ")
+    |> case do
+      "" -> map_get(metadata, :representation, "metadata")
+      labels -> labels
+    end
+  end
+
+  defp repo_metadata_summary(_metadata), do: "metadata"
+
+  defp map_get(map, key, default \\ nil)
+  defp map_get(map, key, default) when is_map(map) and is_atom(key), do: Map.get(map, key, Map.get(map, Atom.to_string(key), default))
+  defp map_get(map, key, default) when is_map(map), do: Map.get(map, key, default)
+  defp map_get(_map, _key, default), do: default
 
   defp orchestrator do
     Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator

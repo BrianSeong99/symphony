@@ -564,10 +564,31 @@ defmodule SymphonyElixir.ExtensionsTest do
         }
       )
 
-    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+    start_test_endpoint(
+      orchestrator: orchestrator_name,
+      snapshot_timeout_ms: 50,
+      runtime_console_state: runtime_console_state()
+    )
 
     {:ok, view, html} = live(build_conn(), "/")
-    assert html =~ "Operations Dashboard"
+    assert html =~ "Private Automation Kernel"
+    assert html =~ "Symphony Runtime Console"
+    assert html =~ "Local Symphony state is canonical"
+    assert html =~ "Project connections"
+    assert html =~ "Private Symphony state"
+    assert html =~ "Runs"
+    assert html =~ "Agents"
+    assert html =~ "Dependency Graph"
+    assert html =~ "Policies"
+    assert html =~ "Relay"
+    assert html =~ "Homelab runtime"
+    assert html =~ "native-full-sync"
+    assert html =~ "Keep deployment notes private inside Symphony."
+    assert html =~ "builder-session-homelab"
+    assert html =~ "github_issue"
+    assert html =~ "GitHub issue"
+    assert html =~ "GitHub PR"
+    assert html =~ "Linear"
     assert html =~ "MT-HTTP"
     assert html =~ "MT-RETRY"
     assert html =~ "MT-BLOCKED"
@@ -762,6 +783,27 @@ defmodule SymphonyElixir.ExtensionsTest do
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
       rate_limits: %{"primary" => %{"remaining" => 11}}
+    }
+  end
+
+  defp runtime_console_state do
+    %{
+      issues: [
+        %{
+          id: "sym-16",
+          identifier: "SYM-16",
+          title: "Reframe dashboard as runtime console",
+          linear_url: "https://linear.app/example/issue/SYM-16",
+          github_issue_url: "https://github.com/BrianSeong99/symphony/issues/16",
+          github_pr_url: "https://github.com/BrianSeong99/symphony/pull/52",
+          workpad: "Keep deployment notes private inside Symphony.",
+          agent_memory: "builder-session-homelab",
+          projection_decisions: %{linear: :full, github_issue: :summary_only}
+        }
+      ],
+      relay_events: [
+        %{provider: "linear", action: "project.updated", status: "received"}
+      ]
     }
   end
 
