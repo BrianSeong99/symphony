@@ -1,0 +1,603 @@
+version: 1
+default_template: symphony
+
+redaction_rules:
+  private_runtime:
+    fields:
+      - workpad
+      - agent_memory
+      - run_metrics
+    public_action: drop
+    reason: private_runtime
+  private_strategy:
+    fields:
+      - planning_notes
+      - private_comments
+    public_action: drop
+    reason: private_strategy
+  sensitive_partner_context:
+    fields:
+      - public_comments
+      - validation
+    markers:
+      - "[partner-private]"
+      - "[sensitive-partner]"
+    public_action: replace
+    replacement: "[redacted:sensitive_partner_context]"
+    reason: sensitive_partner_context
+
+templates:
+  homelab:
+    profile: homelab
+    operating_domain: homelab-personal
+    default_mode: native
+    modes:
+      native:
+        sync_strategy: native-full-sync
+        disabled_surfaces: []
+    surfaces:
+      linear:
+        target: linear
+        visibility: private_cockpit
+        mode: native_full_sync
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_issue:
+        target: github
+        visibility: public
+        mode: native_full_sync
+        fields:
+          - title
+          - dependencies
+          - validation
+          - public_comments
+      github_pr:
+        target: github
+        visibility: public
+        mode: native_pr_link
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - public_comments
+      linear_comment:
+        target: linear
+        visibility: private_cockpit
+        mode: comment_thread
+        fields:
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_comment:
+        target: github
+        visibility: public
+        mode: public_comment
+        fields:
+          - public_comments
+          - validation
+      run_summary:
+        target: linear
+        visibility: private_cockpit
+        mode: run_summary
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - run_metrics
+      checkpoint_request:
+        target: linear
+        visibility: private_cockpit
+        mode: checkpoint_request
+        fields:
+          - dependencies
+          - validation
+          - public_comments
+      symphony:
+        target: symphony
+        visibility: private_runtime
+        mode: runtime_truth
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - agent_memory
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+
+  personal:
+    profile: personal
+    operating_domain: homelab-personal
+    default_mode: native
+    modes:
+      native:
+        sync_strategy: native-full-sync
+        disabled_surfaces: []
+    surfaces:
+      linear:
+        target: linear
+        visibility: private_cockpit
+        mode: native_full_sync
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_issue:
+        target: github
+        visibility: public
+        mode: native_full_sync
+        fields:
+          - title
+          - dependencies
+          - validation
+          - public_comments
+      github_pr:
+        target: github
+        visibility: public
+        mode: native_pr_link
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - public_comments
+      linear_comment:
+        target: linear
+        visibility: private_cockpit
+        mode: comment_thread
+        fields:
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_comment:
+        target: github
+        visibility: public
+        mode: public_comment
+        fields:
+          - public_comments
+          - validation
+      run_summary:
+        target: linear
+        visibility: private_cockpit
+        mode: run_summary
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - run_metrics
+      checkpoint_request:
+        target: linear
+        visibility: private_cockpit
+        mode: checkpoint_request
+        fields:
+          - dependencies
+          - validation
+          - public_comments
+      symphony:
+        target: symphony
+        visibility: private_runtime
+        mode: runtime_truth
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - agent_memory
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+
+  miden:
+    profile: miden
+    operating_domain: miden
+    default_mode: context_only
+    modes:
+      context_only:
+        sync_strategy: relay-context-only
+        disabled_surfaces: []
+      pr_only:
+        sync_strategy: relay-pr-only
+        disabled_surfaces:
+          - github_issue
+    surfaces:
+      linear:
+        target: linear
+        visibility: private_cockpit
+        mode: private_linear_team
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_issue:
+        target: github
+        visibility: public
+        mode: approved_public_comment_only
+        fields:
+          - public_comments
+      github_pr:
+        target: github
+        visibility: public
+        mode: pr_association_and_checks
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - public_comments
+      linear_comment:
+        target: linear
+        visibility: private_cockpit
+        mode: private_linear_comment
+        fields:
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_comment:
+        target: github
+        visibility: public
+        mode: approved_public_comment_only
+        fields:
+          - public_comments
+      run_summary:
+        target: linear
+        visibility: private_cockpit
+        mode: private_run_summary
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - run_metrics
+      checkpoint_request:
+        target: linear
+        visibility: private_cockpit
+        mode: private_checkpoint_request
+        fields:
+          - dependencies
+          - validation
+          - public_comments
+      symphony:
+        target: symphony
+        visibility: private_runtime
+        mode: runtime_truth
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - agent_memory
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+
+  chainless:
+    profile: chainless
+    operating_domain: chainless
+    default_mode: existing_team_aware
+    modes:
+      existing_team_aware:
+        sync_strategy: relay-full-sync
+        disabled_surfaces: []
+      pr_only:
+        sync_strategy: relay-pr-only
+        disabled_surfaces:
+          - github_issue
+    surfaces:
+      linear:
+        target: linear
+        visibility: private_cockpit
+        mode: company_workflow_aware
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_issue:
+        target: github
+        visibility: public
+        mode: existing_team_safe_context
+        overwrite_company_workflow_state: false
+        fields:
+          - dependencies
+          - validation
+          - public_comments
+      github_pr:
+        target: github
+        visibility: public
+        mode: pr_association_and_checks
+        overwrite_company_workflow_state: false
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - public_comments
+      linear_comment:
+        target: linear
+        visibility: private_cockpit
+        mode: company_workflow_aware_comment
+        fields:
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_comment:
+        target: github
+        visibility: public
+        mode: existing_team_safe_comment
+        overwrite_company_workflow_state: false
+        fields:
+          - public_comments
+          - validation
+      run_summary:
+        target: linear
+        visibility: private_cockpit
+        mode: private_run_summary
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - run_metrics
+      checkpoint_request:
+        target: linear
+        visibility: private_cockpit
+        mode: private_checkpoint_request
+        fields:
+          - dependencies
+          - validation
+          - public_comments
+      symphony:
+        target: symphony
+        visibility: private_runtime
+        mode: runtime_truth
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - agent_memory
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+
+  wprc:
+    profile: wprc
+    operating_domain: wprc
+    default_mode: context_only
+    modes:
+      controlled:
+        sync_strategy: native-full-sync
+        disabled_surfaces: []
+      context_only:
+        sync_strategy: relay-context-only
+        disabled_surfaces:
+          - github_issue
+    surfaces:
+      linear:
+        target: linear
+        visibility: private_cockpit
+        mode: community_ops
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_issue:
+        target: github
+        visibility: public
+        mode: controlled_native_sync
+        fields:
+          - title
+          - dependencies
+          - validation
+          - public_comments
+      github_pr:
+        target: github
+        visibility: public
+        mode: pr_association_and_checks
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - public_comments
+      linear_comment:
+        target: linear
+        visibility: private_cockpit
+        mode: community_ops_comment
+        fields:
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_comment:
+        target: github
+        visibility: public
+        mode: controlled_public_comment
+        fields:
+          - public_comments
+          - validation
+      run_summary:
+        target: linear
+        visibility: private_cockpit
+        mode: private_run_summary
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - run_metrics
+      checkpoint_request:
+        target: linear
+        visibility: private_cockpit
+        mode: community_checkpoint_request
+        fields:
+          - dependencies
+          - validation
+          - public_comments
+      symphony:
+        target: symphony
+        visibility: private_runtime
+        mode: runtime_truth
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - agent_memory
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+
+  symphony:
+    profile: symphony
+    operating_domain: symphony
+    default_mode: relay_pr
+    modes:
+      relay_pr:
+        sync_strategy: relay-pr-only
+        disabled_surfaces:
+          - github_issue
+      relay_context:
+        sync_strategy: relay-context-only
+        disabled_surfaces:
+          - github_issue
+    surfaces:
+      linear:
+        target: linear
+        visibility: private_cockpit
+        mode: cockpit_runtime_summary
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_issue:
+        target: github
+        visibility: public
+        mode: disabled_by_default
+        fields:
+          - public_comments
+      github_pr:
+        target: github
+        visibility: public
+        mode: pr_association_and_checks
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - public_comments
+      linear_comment:
+        target: linear
+        visibility: private_cockpit
+        mode: cockpit_comment
+        fields:
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
+      github_comment:
+        target: github
+        visibility: public
+        mode: disabled_by_default
+        fields:
+          - public_comments
+      run_summary:
+        target: linear
+        visibility: private_cockpit
+        mode: runtime_run_summary
+        fields:
+          - pr_state
+          - checks
+          - validation
+          - run_metrics
+      checkpoint_request:
+        target: linear
+        visibility: private_cockpit
+        mode: runtime_checkpoint_request
+        fields:
+          - dependencies
+          - validation
+          - public_comments
+      symphony:
+        target: symphony
+        visibility: private_runtime
+        mode: runtime_truth
+        fields:
+          - title
+          - status
+          - planning_notes
+          - workpad
+          - dependencies
+          - agent_memory
+          - pr_state
+          - checks
+          - public_comments
+          - private_comments
+          - validation
+          - run_metrics
