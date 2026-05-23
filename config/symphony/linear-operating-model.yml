@@ -67,10 +67,12 @@ operating_domains:
     name: WPRC
     linear_team_key: WPRC
     allowed_sync_profiles:
+      - native-full-sync
       - relay-context-only
       - no-github
     github_issue_sync:
-      native_allowed: false
+      native_allowed: true
+      reason: Native sync is allowed only for WPRC repositories Brian controls; otherwise use relay-context-only.
     default_checkpoint_cadence: weekly
 
   - key: symphony
