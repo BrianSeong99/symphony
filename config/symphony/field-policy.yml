@@ -65,14 +65,14 @@ fields:
 
 profiles:
   homelab:
-    operating_domain: homelab-personal
+    operating_domain: labs
     workspace: labs
     github_profile: owned-full-sync
     public_projection: allowed
     approval_required:
       - public_comments
   personal:
-    operating_domain: homelab-personal
+    operating_domain: personal
     workspace: personal
     github_profile: owned-full-sync
     public_projection: allowed
@@ -111,7 +111,7 @@ profiles:
       - dependencies
       - validation
   symphony:
-    operating_domain: symphony
+    operating_domain: labs
     workspace: labs
     github_profile: private-runtime
     public_projection: restricted

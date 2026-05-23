@@ -15,14 +15,14 @@ defmodule SymphonyElixir.Linear.IntakeTest do
         triage: %{
           labels: ["runtime", %{"name" => "linear"}],
           owner: %{"name" => "Brian"},
-          project: "symphony-linear-cockpit",
+          project: "symphony",
           priority: "high"
         },
         agent: %{
           dependencies: ["SYM-36", %{"identifier" => "SYM-37"}],
           checkpoint_requests: [%{"reason" => "Confirm Linear relay policy", "cadence" => "weekly"}],
           project_metadata: %{
-            "outcome_project" => "symphony-linear-cockpit",
+            "outcome_project" => "symphony",
             "sync_profile" => "relay-pr-only"
           }
         }
@@ -33,7 +33,7 @@ defmodule SymphonyElixir.Linear.IntakeTest do
 
     assert suggestion(result, :triage, :labels).value == ["runtime", "linear"]
     assert suggestion(result, :triage, :owner).value == "Brian"
-    assert suggestion(result, :triage, :project).value == "symphony-linear-cockpit"
+    assert suggestion(result, :triage, :project).value == "symphony"
     assert suggestion(result, :triage, :priority).value == "high"
     assert suggestion(result, :dependency, :dependencies).value == ["SYM-36", "SYM-37"]
 
@@ -42,7 +42,7 @@ defmodule SymphonyElixir.Linear.IntakeTest do
     assert checkpoint.value.cadence == "weekly"
 
     project_metadata = suggestion(result, :project_metadata, :project_metadata)
-    assert project_metadata.value.outcome_project == "symphony-linear-cockpit"
+    assert project_metadata.value.outcome_project == "symphony"
     assert project_metadata.value.sync_profile == "relay-pr-only"
   end
 
@@ -120,7 +120,7 @@ defmodule SymphonyElixir.Linear.IntakeTest do
               }
             ],
             project_metadata: %{
-              "outcome_project" => "guardian-launch",
+              "outcome_project" => "docs",
               "operating_domain" => "miden",
               "sync_profile" => "native-full-sync"
             }

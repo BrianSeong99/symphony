@@ -117,12 +117,17 @@ defmodule SymphonyElixir.FieldPolicyTest do
                :symphony
              ])
 
-    assert FieldPolicy.profiles_for_operating_domains(policy, operating_model) == %{
-             "homelab-personal" => [:homelab, :personal],
+    profile_map =
+      policy
+      |> FieldPolicy.profiles_for_operating_domains(operating_model)
+      |> Map.new(fn {domain, profiles} -> {domain, Enum.sort(profiles)} end)
+
+    assert profile_map == %{
+             "labs" => [:homelab, :symphony],
              "miden" => [:miden],
              "chainless" => [:chainless],
-             "wprc" => [:wprc],
-             "symphony" => [:symphony]
+             "personal" => [:personal],
+             "wprc" => [:wprc]
            }
   end
 end

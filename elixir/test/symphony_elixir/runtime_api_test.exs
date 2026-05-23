@@ -26,7 +26,8 @@ defmodule SymphonyElixir.RuntimeApiTest do
 
     projects = json_response(get(build_conn(), "/api/v1/runtime/projects"), 200)
     assert projects["source_of_truth"] == "symphony"
-    assert Enum.any?(projects["projects"], &(&1["key"] == "homelab-runtime" and &1["sync_profile"] == "native-full-sync"))
+    assert Enum.any?(projects["projects"], &(&1["key"] == "homelab" and &1["sync_profile"] == "native-full-sync"))
+    assert Enum.any?(projects["projects"], &(&1["key"] == "symphony" and &1["homelab_workspace_id"] == "labs"))
 
     policies = json_response(get(build_conn(), "/api/v1/runtime/policies"), 200)
     assert "miden" in policies["field_profiles"]

@@ -13,7 +13,7 @@ defmodule SymphonyElixir.Homelab.FullSync do
   alias SymphonyElixir.Projects.{Project, ProjectConnection}
 
   @operating_model_path Path.expand("../../../../config/symphony/linear-operating-model.yml", __DIR__)
-  @project_key "homelab-runtime"
+  @project_key "homelab"
   @full_sync_capabilities %{
     "create_issues" => true,
     "edit_issues" => true,
@@ -33,6 +33,7 @@ defmodule SymphonyElixir.Homelab.FullSync do
           required(:operating_domain) => String.t(),
           required(:linear_team_key) => String.t(),
           required(:linear_project_key) => String.t(),
+          optional(:linear_project_url) => String.t() | nil,
           required(:sync_profile) => String.t(),
           required(:github_repository) => String.t(),
           required(:github_owner) => String.t(),
@@ -67,6 +68,7 @@ defmodule SymphonyElixir.Homelab.FullSync do
       operating_domain: Map.fetch!(project, "operating_domain"),
       linear_team_key: Map.fetch!(domain, "linear_team_key"),
       linear_project_key: Map.fetch!(project, "linear_project_key"),
+      linear_project_url: Map.get(project, "linear_project_url"),
       sync_profile: Map.fetch!(project, "sync_profile"),
       github_repository: Enum.join(repo, "/"),
       github_owner: Enum.at(repo, 0),

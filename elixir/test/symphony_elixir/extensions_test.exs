@@ -581,7 +581,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Dependency Graph"
     assert html =~ "Policies"
     assert html =~ "Relay"
-    assert html =~ "Homelab runtime"
+    assert html =~ "Homelab"
     assert html =~ "native-full-sync"
     assert html =~ "Keep deployment notes private inside Symphony."
     assert html =~ "builder-session-homelab"
