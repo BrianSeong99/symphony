@@ -1,0 +1,398 @@
+{
+  "chainless_existing_team_relay": {
+    "checkpoints": [],
+    "conflict": {
+      "checkpoint_required": false,
+      "conflicts": [],
+      "status": "ok"
+    },
+    "github": {
+      "performed": [
+        "ingest_checks",
+        "ingest_reviews"
+      ],
+      "private_leak_fields": [],
+      "projection": {
+        "github_issue_allowed": [
+          "dependencies",
+          "public_comments",
+          "validation"
+        ],
+        "github_issue_rejected": [],
+        "github_issue_redacted": [],
+        "metadata": {
+          "overwrite_company_workflow_state": false
+        }
+      },
+      "skipped": [],
+      "sync_mode": "pr_only"
+    },
+    "linear": {
+      "accepted": [
+        "dependency:dependencies",
+        "workpad_amendment:workpad"
+      ],
+      "allowed_private_fields": [
+        "planning_notes",
+        "private_comments",
+        "run_metrics",
+        "workpad"
+      ],
+      "intake_status": "mixed",
+      "rejected": []
+    },
+    "review": {
+      "status": "human_review_ready",
+      "validation": "passed"
+    },
+    "scheduler": {
+      "blocked": [],
+      "blocked_by": {},
+      "dispatch": [],
+      "held": [],
+      "waiting": []
+    },
+    "status": "passed",
+    "symphony": {
+      "allowed_private_fields": [
+        "agent_memory",
+        "planning_notes",
+        "private_comments",
+        "run_metrics",
+        "workpad"
+      ]
+    },
+    "workspace": "chainless"
+  },
+  "homelab_native_full_sync": {
+    "checkpoints": [],
+    "conflict": {
+      "checkpoint_required": false,
+      "conflicts": [],
+      "status": "ok"
+    },
+    "github": {
+      "performed": [
+        "sync_issue",
+        "sync_labels",
+        "sync_milestone",
+        "sync_workpad_comment",
+        "sync_pr_link",
+        "sync_review_state",
+        "ingest_checks",
+        "ingest_reviews"
+      ],
+      "private_leak_fields": [],
+      "projection": {
+        "github_issue_allowed": [
+          "dependencies",
+          "public_comments",
+          "title",
+          "validation"
+        ],
+        "github_issue_rejected": [],
+        "github_issue_redacted": [],
+        "metadata": {}
+      },
+      "skipped": [],
+      "sync_mode": "full_sync"
+    },
+    "linear": {
+      "accepted": [
+        "checkpoint_request:private_comments",
+        "dependency:dependencies",
+        "workpad_amendment:workpad"
+      ],
+      "allowed_private_fields": [
+        "planning_notes",
+        "private_comments",
+        "run_metrics",
+        "workpad"
+      ],
+      "intake_status": "mixed",
+      "rejected": []
+    },
+    "review": {
+      "status": "human_review_ready",
+      "validation": "passed"
+    },
+    "scheduler": {
+      "blocked": [
+        103
+      ],
+      "blocked_by": {
+        "103": [
+          {
+            "dependency_issue_id": 102,
+            "dependency_status": "ready",
+            "dependency_title": "Add PR validation",
+            "unblock_condition": "PR validation path green"
+          }
+        ]
+      },
+      "dispatch": [
+        101,
+        102
+      ],
+      "held": [],
+      "waiting": []
+    },
+    "status": "passed",
+    "symphony": {
+      "allowed_private_fields": [
+        "agent_memory",
+        "planning_notes",
+        "private_comments",
+        "run_metrics",
+        "workpad"
+      ]
+    },
+    "workspace": "homelab"
+  },
+  "loop_breaker_human_checkpoint": {
+    "checkpoints": [
+      {
+        "evidence_count": 2,
+        "source": "review_loop",
+        "status": "human-checkpoint",
+        "trigger": "repeated_failure_signature"
+      },
+      {
+        "evidence_count": 1,
+        "source": "review_loop",
+        "status": "human-checkpoint",
+        "trigger": "validation_spec_contradiction"
+      }
+    ],
+    "conflict": {
+      "checkpoint_required": false,
+      "conflicts": [],
+      "status": "ok"
+    },
+    "github": {
+      "performed": [],
+      "private_leak_fields": [],
+      "projection": {
+        "github_issue_allowed": [],
+        "github_issue_rejected": [],
+        "github_issue_redacted": [],
+        "metadata": {}
+      },
+      "skipped": [],
+      "sync_mode": "none"
+    },
+    "linear": {
+      "accepted": [],
+      "allowed_private_fields": [],
+      "intake_status": "empty",
+      "rejected": []
+    },
+    "review": {
+      "loop_breaker_triggers": [
+        "repeated_failure_signature",
+        "validation_spec_contradiction"
+      ],
+      "status": "human-checkpoint",
+      "validation": "failed"
+    },
+    "scheduler": {
+      "blocked": [],
+      "blocked_by": {},
+      "dispatch": [],
+      "held": [],
+      "waiting": []
+    },
+    "status": "checkpoint_required",
+    "symphony": {
+      "allowed_private_fields": []
+    },
+    "workspace": "symphony"
+  },
+  "miden_private_linear_relay": {
+    "checkpoints": [],
+    "conflict": {
+      "checkpoint_required": false,
+      "conflicts": [],
+      "status": "ok"
+    },
+    "github": {
+      "performed": [
+        "ingest_checks",
+        "ingest_reviews"
+      ],
+      "private_leak_fields": [],
+      "projection": {
+        "github_issue_allowed": [],
+        "github_issue_rejected": [
+          "public_comments"
+        ],
+        "github_issue_redacted": [],
+        "metadata": {}
+      },
+      "skipped": [],
+      "sync_mode": "pr_only"
+    },
+    "linear": {
+      "accepted": [
+        "dependency:dependencies",
+        "workpad_amendment:workpad"
+      ],
+      "allowed_private_fields": [
+        "planning_notes",
+        "private_comments",
+        "run_metrics",
+        "workpad"
+      ],
+      "intake_status": "mixed",
+      "rejected": []
+    },
+    "review": {
+      "status": "human_review_ready",
+      "validation": "passed"
+    },
+    "scheduler": {
+      "blocked": [],
+      "blocked_by": {},
+      "dispatch": [],
+      "held": [],
+      "waiting": []
+    },
+    "status": "passed",
+    "symphony": {
+      "allowed_private_fields": [
+        "agent_memory",
+        "planning_notes",
+        "private_comments",
+        "run_metrics",
+        "workpad"
+      ]
+    },
+    "workspace": "miden"
+  },
+  "scheduler_parallel_dag": {
+    "checkpoints": [],
+    "conflict": {
+      "checkpoint_required": false,
+      "conflicts": [],
+      "status": "ok"
+    },
+    "github": {
+      "performed": [],
+      "private_leak_fields": [],
+      "projection": {
+        "github_issue_allowed": [],
+        "github_issue_rejected": [],
+        "github_issue_redacted": [],
+        "metadata": {}
+      },
+      "skipped": [],
+      "sync_mode": "none"
+    },
+    "linear": {
+      "accepted": [],
+      "allowed_private_fields": [],
+      "intake_status": "empty",
+      "rejected": []
+    },
+    "review": {
+      "status": "not_run",
+      "validation": "not_run"
+    },
+    "scheduler": {
+      "blocked": [
+        204
+      ],
+      "blocked_by": {
+        "204": [
+          {
+            "dependency_issue_id": 202,
+            "dependency_status": "ready",
+            "dependency_title": "Build projection templates",
+            "unblock_condition": "projection templates merged"
+          }
+        ]
+      },
+      "dispatch": [
+        202,
+        203
+      ],
+      "held": [],
+      "waiting": [
+        205
+      ]
+    },
+    "status": "passed",
+    "symphony": {
+      "allowed_private_fields": []
+    },
+    "workspace": "symphony"
+  },
+  "wprc_controlled_native_sync": {
+    "checkpoints": [],
+    "conflict": {
+      "checkpoint_required": false,
+      "conflicts": [],
+      "status": "ok"
+    },
+    "github": {
+      "performed": [
+        "sync_issue",
+        "sync_labels",
+        "sync_milestone",
+        "sync_workpad_comment",
+        "sync_pr_link",
+        "sync_review_state",
+        "ingest_checks",
+        "ingest_reviews"
+      ],
+      "private_leak_fields": [],
+      "projection": {
+        "github_issue_allowed": [
+          "public_comments",
+          "title",
+          "validation"
+        ],
+        "github_issue_rejected": [],
+        "github_issue_redacted": [],
+        "metadata": {}
+      },
+      "skipped": [],
+      "sync_mode": "full_sync"
+    },
+    "linear": {
+      "accepted": [
+        "workpad_amendment:workpad"
+      ],
+      "allowed_private_fields": [
+        "planning_notes",
+        "private_comments",
+        "run_metrics",
+        "workpad"
+      ],
+      "intake_status": "mixed",
+      "rejected": []
+    },
+    "review": {
+      "status": "human_review_ready",
+      "validation": "passed"
+    },
+    "scheduler": {
+      "blocked": [],
+      "blocked_by": {},
+      "dispatch": [],
+      "held": [],
+      "waiting": []
+    },
+    "status": "passed",
+    "symphony": {
+      "allowed_private_fields": [
+        "agent_memory",
+        "planning_notes",
+        "private_comments",
+        "run_metrics",
+        "workpad"
+      ]
+    },
+    "workspace": "wprc"
+  }
+}

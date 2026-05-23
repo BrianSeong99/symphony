@@ -1,0 +1,517 @@
+version: 1
+scenario_order:
+  - homelab_native_full_sync
+  - miden_private_linear_relay
+  - chainless_existing_team_relay
+  - wprc_controlled_native_sync
+  - loop_breaker_human_checkpoint
+  - scheduler_parallel_dag
+
+scenarios:
+  homelab_native_full_sync:
+    workspace: homelab
+    template: homelab
+    mode: native
+    projection:
+      approvals:
+        - public_comments
+      capabilities:
+        edit_issues: true
+        comment: true
+    values:
+      title: Homelab health endpoint propagation
+      planning_notes: Private rollout notes for homelab service health checks.
+      workpad: Keep the Docker health endpoint migration in the private workpad.
+      dependencies:
+        - SYM-2
+      agent_memory: Persistent builder context for the homelab stack.
+      pr_state: open
+      checks: green
+      validation: mix test passed
+      public_comments: Ready for PR validation.
+      private_comments: Private operational note.
+      run_metrics:
+        retry_count: 0
+    linear_intake:
+      source: linear_intelligence
+      project_id: 1
+      symphony_issue_id: 18
+      profile: homelab
+      triage:
+        labels:
+          - homelab
+          - runtime
+        owner: Brian
+        project: homelab-runtime
+        priority: high
+      agent:
+        dependencies:
+          - SYM-2
+        workpad_amendments:
+          - section: Scope Interpretation
+            text: Keep the health check rollout tied to the PR validation path.
+        checkpoint_requests:
+          - reason: Confirm PR validation before merge.
+            cadence: before-merge
+    linear_accept:
+      approved_kinds:
+        - workpad_amendment
+        - dependency
+        - checkpoint_request
+    project:
+      name: Homelab
+      slug: homelab
+      workspace: labs
+    github:
+      connection_mode: full_sync
+      owner: BrianSeong99
+      repo: homelab
+      capabilities:
+        create_issues: true
+        edit_issues: true
+        create_labels: true
+        edit_milestones: true
+        comment: true
+        create_prs: true
+        read_prs: true
+        read_checks: true
+        read_reviews: true
+      context:
+        project_id: 1
+        symphony_issue_id: 18
+        title: Homelab health endpoint propagation
+        body: Public issue body.
+        dependency_summary: "Depends on: #2 persistence"
+        labels:
+          - symphony
+          - homelab
+        milestone_title: Linear cockpit + Symphony kernel v1
+        workpad_body: Planning notes summary.
+        github_pr_number: 51
+        review_state: approved
+        review_body: Validation passed.
+        explicit_pr_association: true
+        explicit_public_comment: true
+    scheduler:
+      max_concurrency: 2
+      issues:
+        - id: 101
+          project_id: 1
+          title: Sync Linear issue
+          status: ready
+        - id: 102
+          project_id: 1
+          title: Add PR validation
+          status: ready
+        - id: 103
+          project_id: 1
+          title: Merge homelab rollout
+          status: ready
+      edges:
+        - dependent_issue_id: 103
+          dependency_issue_id: 102
+          unblock_condition: PR validation path green
+    review:
+      issue:
+        id: 18
+        title: Homelab PR validation
+      feedback:
+        - type: check_failure
+          name: mix test
+          body: Initial validation failed before repair.
+      validation:
+        status: passed
+        evidence: mix test passed
+    conflict:
+      project_id: 1
+      symphony_issue_id: 18
+      required_links:
+        - github_issue
+        - github_pr
+      links:
+        github_issue: https://github.com/BrianSeong99/homelab/issues/18
+        github_pr: https://github.com/BrianSeong99/homelab/pull/51
+      webhook:
+        provider: linear
+        event_id: evt-homelab
+        occurred_at: "2026-05-24T00:00:00Z"
+        last_seen_at: "2026-05-24T00:00:00Z"
+      expected:
+        linear:
+          title: Homelab health endpoint propagation
+        github_issue:
+          body: Public issue body.
+        github_pr:
+          state: open
+        dependencies:
+          - SYM-2
+      observed:
+        linear:
+          title: Homelab health endpoint propagation
+        github_issue:
+          body: Public issue body.
+        github_pr:
+          state: open
+        dependencies:
+          - SYM-2
+
+  miden_private_linear_relay:
+    workspace: miden
+    template: miden
+    mode: context_only
+    projection:
+      approvals: []
+      capabilities:
+        edit_issues: true
+        comment: true
+    values:
+      title: Guardian launch coordination
+      planning_notes: Private Guardian partner strategy stays in Linear and Symphony.
+      workpad: Private Wallet PRD and Guardian launch workpad.
+      dependencies:
+        - MID-21
+      agent_memory: Persistent reviewer context for Miden public repo policy.
+      pr_state: open
+      checks: green
+      validation: relay policy tests passed
+      public_comments: Public-safe PR association note.
+      private_comments: Private Miden checkpoint context.
+      run_metrics:
+        retry_count: 1
+    linear_intake:
+      source: linear_agent
+      project_id: 2
+      symphony_issue_id: 18
+      profile: miden
+      triage:
+        labels:
+          - miden
+          - guardian
+        owner: Brian
+        project: guardian-launch
+        priority: high
+      agent:
+        dependencies:
+          - MID-21
+        workpad_amendments:
+          - section: Scope Interpretation
+            text: Keep Miden launch strategy private and project only public-safe PR context.
+    linear_accept:
+      approved_kinds:
+        - workpad_amendment
+        - dependency
+    project:
+      name: Miden
+      slug: miden
+      workspace: miden
+    github:
+      connection_mode: pr_only
+      owner: 0xMiden
+      repo: miden-client
+      capabilities:
+        read_checks: true
+        read_reviews: true
+        read_prs: true
+      context:
+        project_id: 2
+        symphony_issue_id: 18
+        github_pr_number: 411
+    review:
+      issue:
+        id: 18
+        title: Miden relay policy
+      feedback:
+        - type: review_summary
+          body: Confirm no private metadata reaches GitHub.
+      validation:
+        status: passed
+        evidence: Miden projection tests passed.
+    conflict:
+      project_id: 2
+      symphony_issue_id: 18
+      required_links:
+        - github_pr
+      links:
+        github_pr: https://github.com/0xMiden/miden-client/pull/411
+      expected:
+        linear:
+          title: Guardian launch coordination
+        github_pr:
+          state: open
+        dependencies:
+          - MID-21
+      observed:
+        linear:
+          title: Guardian launch coordination
+        github_pr:
+          state: open
+        dependencies:
+          - MID-21
+
+  chainless_existing_team_relay:
+    workspace: chainless
+    template: chainless
+    mode: existing_team_aware
+    projection:
+      approvals:
+        - public_comments
+      capabilities:
+        edit_issues: true
+        comment: true
+    values:
+      title: Alpha execution
+      status: In Progress
+      planning_notes: Private Omega execution plan.
+      workpad: Private Chainless workpad.
+      dependencies:
+        - CHN-1
+      agent_memory: Persistent builder context for Omega.
+      pr_state: open
+      checks: green
+      validation: integration test passed
+      public_comments: Public relay update.
+      private_comments: Private Chainless coordination note.
+      run_metrics:
+        retry_count: 0
+    linear_intake:
+      source: linear_agent
+      project_id: 3
+      symphony_issue_id: 18
+      profile: chainless
+      triage:
+        labels:
+          - chainless
+          - relay
+        owner: Brian
+        project: chainless-alpha
+        priority: medium
+      agent:
+        dependencies:
+          - CHN-1
+        workpad_amendments:
+          - section: Scope Interpretation
+            text: Respect the company-owned workflow state and only relay safe context.
+    linear_accept:
+      approved_kinds:
+        - workpad_amendment
+        - dependency
+    project:
+      name: Chainless Alpha
+      slug: chainless-alpha
+      workspace: chainless
+    github:
+      connection_mode: pr_only
+      owner: TheChainlessLabs
+      repo: omega-markets
+      capabilities:
+        read_checks: true
+        read_reviews: true
+        read_prs: true
+      context:
+        project_id: 3
+        symphony_issue_id: 18
+        github_pr_number: 77
+    review:
+      issue:
+        id: 18
+        title: Chainless existing-team relay
+      feedback:
+        - type: inline_comment
+          body: Keep company workflow state untouched.
+      validation:
+        status: passed
+        evidence: relay safety test passed
+    conflict:
+      project_id: 3
+      symphony_issue_id: 18
+      required_links:
+        - github_pr
+      links:
+        github_pr: https://github.com/TheChainlessLabs/omega-markets/pull/77
+      expected:
+        github_pr:
+          state: open
+        dependencies:
+          - CHN-1
+      observed:
+        github_pr:
+          state: open
+        dependencies:
+          - CHN-1
+
+  wprc_controlled_native_sync:
+    workspace: wprc
+    template: wprc
+    mode: controlled
+    projection:
+      approvals:
+        - public_comments
+      capabilities:
+        edit_issues: true
+        comment: true
+    values:
+      title: WPRC website chapter page
+      planning_notes: Private chapter launch notes.
+      workpad: Private WPRC workpad.
+      agent_memory: Persistent reviewer context for WPRC.
+      pr_state: open
+      checks: green
+      validation: preview passed
+      public_comments: Ready for controlled native sync.
+      private_comments: Private WPRC coordination note.
+      run_metrics:
+        retry_count: 0
+    linear_intake:
+      source: linear_intelligence
+      project_id: 4
+      symphony_issue_id: 18
+      profile: wprc
+      triage:
+        labels:
+          - wprc
+          - website
+        owner: Brian
+        project: wprc-website
+        priority: medium
+      agent:
+        workpad_amendments:
+          - section: Scope Interpretation
+            text: Controlled permissions allow native GitHub issue sync.
+    linear_accept:
+      approved_kinds:
+        - workpad_amendment
+    project:
+      name: WPRC Website
+      slug: wprc-website
+      workspace: wprc
+    github:
+      connection_mode: full_sync
+      owner: BrianSeong99
+      repo: wprc-website
+      capabilities:
+        create_issues: true
+        edit_issues: true
+        create_labels: true
+        edit_milestones: true
+        comment: true
+        create_prs: true
+        read_prs: true
+        read_checks: true
+        read_reviews: true
+      context:
+        project_id: 4
+        symphony_issue_id: 18
+        title: WPRC website chapter page
+        body: Public website issue body.
+        labels:
+          - wprc
+        milestone_title: Linear cockpit + Symphony kernel v1
+        workpad_body: Planning notes summary.
+        github_pr_number: 12
+        review_state: approved
+        review_body: Preview passed.
+        explicit_pr_association: true
+        explicit_public_comment: true
+    review:
+      issue:
+        id: 18
+        title: WPRC controlled native sync
+      feedback:
+        - type: comment
+          body: Verify preview before handoff.
+      validation:
+        status: passed
+        evidence: preview passed
+    conflict:
+      project_id: 4
+      symphony_issue_id: 18
+      required_links:
+        - github_issue
+        - github_pr
+      links:
+        github_issue: https://github.com/BrianSeong99/wprc-website/issues/18
+        github_pr: https://github.com/BrianSeong99/wprc-website/pull/12
+      expected:
+        linear:
+          title: WPRC website chapter page
+        github_issue:
+          body: Public website issue body.
+        github_pr:
+          state: open
+      observed:
+        linear:
+          title: WPRC website chapter page
+        github_issue:
+          body: Public website issue body.
+        github_pr:
+          state: open
+
+  loop_breaker_human_checkpoint:
+    workspace: symphony
+    kind: loop_breaker
+    loop_breaker:
+      repeated_failure:
+        issue:
+          id: 301
+          title: Repair validation loop
+        feedback:
+          - type: comment
+            body: Fix the failing validation.
+        events:
+          - kind: validation_failure
+            phase: validation
+            attempt: 1
+            command: mix test
+            output: same failure
+          - kind: validation_failure
+            phase: validation
+            attempt: 2
+            command: mix test
+            output: same failure
+        validation:
+          status: failed
+          evidence: same failure
+      spec_mismatch:
+        issue:
+          id: 302
+          title: Resolve validation mismatch
+        feedback:
+          - type: comment
+            body: Validation and issue spec disagree.
+        events:
+          - kind: validation_spec_contradiction
+            phase: validation
+            validation: mix test --exclude live_e2e
+            spec: Run live worker test
+            reason: Validation excludes required live worker test.
+
+  scheduler_parallel_dag:
+    workspace: symphony
+    kind: scheduler
+    scheduler:
+      max_concurrency: 2
+      issues:
+        - id: 201
+          project_id: 5
+          title: Persistence foundation
+          status: done
+        - id: 202
+          project_id: 5
+          title: Build projection templates
+          status: ready
+        - id: 203
+          project_id: 5
+          title: Add Linear actions
+          status: ready
+        - id: 204
+          project_id: 5
+          title: Simulate Homelab rollout
+          status: ready
+        - id: 205
+          project_id: 5
+          title: Build runtime console
+          status: ready
+      edges:
+        - dependent_issue_id: 204
+          dependency_issue_id: 202
+          unblock_condition: projection templates merged
