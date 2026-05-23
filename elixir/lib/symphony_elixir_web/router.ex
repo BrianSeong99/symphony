@@ -29,13 +29,23 @@ defmodule SymphonyElixirWeb.Router do
 
   scope "/", SymphonyElixirWeb do
     get("/api/v1/state", ObservabilityApiController, :state)
+    get("/api/v1/runtime/health", RuntimeApiController, :health)
+    get("/api/v1/runtime/relay/events", RuntimeApiController, :relay_events)
+    post("/api/v1/runtime/projection-preview", RuntimeApiController, :projection_preview)
+    get("/api/v1/runtime/:resource", RuntimeApiController, :resource)
+    post("/api/v1/linear/webhooks", RuntimeApiController, :linear_webhook)
 
     match(:*, "/", ObservabilityApiController, :method_not_allowed)
     match(:*, "/api/v1/state", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/api/v1/runtime/health", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/api/v1/runtime/relay/events", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/api/v1/runtime/projection-preview", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/api/v1/linear/webhooks", ObservabilityApiController, :method_not_allowed)
     post("/api/v1/refresh", ObservabilityApiController, :refresh)
     match(:*, "/api/v1/refresh", ObservabilityApiController, :method_not_allowed)
     post("/api/v1/linear/actions", LinearActionController, :execute)
     match(:*, "/api/v1/linear/actions", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/api/v1/runtime/:resource", ObservabilityApiController, :method_not_allowed)
     get("/api/v1/:issue_identifier", ObservabilityApiController, :issue)
     match(:*, "/api/v1/:issue_identifier", ObservabilityApiController, :method_not_allowed)
     match(:*, "/*path", ObservabilityApiController, :not_found)
