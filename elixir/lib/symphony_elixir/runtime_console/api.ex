@@ -129,6 +129,7 @@ defmodule SymphonyElixir.RuntimeConsole.Api do
       linear_project_key: Map.fetch!(project, "linear_project_key"),
       linear_project_url: Map.get(project, "linear_project_url"),
       sync_profile: Map.fetch!(project, "sync_profile"),
+      github_issues_sync: Map.get(project, "github_issues_sync", "disabled"),
       repo_metadata: Map.get(project, "repo_metadata", %{}),
       checkpoint_cadence: OperatingModel.checkpoint_cadence(model, project_key),
       policy_overrides: Map.get(project, "policy_overrides", %{})

@@ -38,6 +38,15 @@ codex:
 
 You are working on a Linear ticket `{{ issue.identifier }}`
 
+## Linear GitHub integration policy
+
+Linear's GitHub integration is connected for GitHub App/org access, Brian's
+personal GitHub account, private repositories, branch formatting, linkbacks,
+PR linking, commit linking, checks, reviews, and diffs. Do not treat that as
+GitHub Issues Sync. GitHub Issues Sync is disabled by default and is allowed
+only when the Symphony operating model marks the project with
+`github_issues_sync: explicit_exception`.
+
 {% if attempt %}
 Continuation context:
 

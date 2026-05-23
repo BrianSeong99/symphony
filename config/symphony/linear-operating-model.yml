@@ -7,6 +7,22 @@ sync_profiles:
   - relay-context-only
   - no-github
 
+github_integration:
+  github_app_org_access: connected
+  personal_account_connection: connected
+  private_repositories: enabled
+  branch_format: enabled
+  linkbacks: enabled
+  pr_linking: enabled
+  commit_linking: enabled
+  checks: enabled
+  reviews: enabled
+  github_issues_sync_default: disabled
+  native_issue_sync_policy: explicit_exception_only
+  notes:
+    - Native GitHub integration means PRs, commits, checks, reviews, diffs, branches, and linkbacks.
+    - GitHub Issues Sync is disabled by default and must be enabled only as an explicit per-project exception.
+
 checkpoint_cadence:
   default: weekly
   project_overrides:
@@ -41,7 +57,7 @@ operating_domains:
       - no-github
     github_issue_sync:
       native_allowed: true
-      reason: Brian-owned Labs repositories can use native Linear-GitHub sync when project policy allows it.
+      reason: Brian-owned Labs repositories can use GitHub Issues Sync only as an explicit project exception; native PR/check/review/linkbacks remain enabled.
     default_checkpoint_cadence: weekly
 
   - key: miden
@@ -54,7 +70,7 @@ operating_domains:
       - no-github
     github_issue_sync:
       native_allowed: false
-      reason: Miden repositories are public/company-owned surfaces; GitHub receives only policy-gated downstream context.
+      reason: Miden repositories are public/company-owned surfaces; GitHub Issues Sync is disabled.
     default_checkpoint_cadence: twice-weekly
 
   - key: chainless
@@ -68,7 +84,7 @@ operating_domains:
       - no-github
     github_issue_sync:
       native_allowed: false
-      reason: Respect the existing Omega/Chainless team workflow and relay only safe summaries or PR associations.
+      reason: Respect the existing Omega/Chainless team workflow; GitHub Issues Sync is disabled.
     default_checkpoint_cadence: twice-weekly
 
   - key: wprc
@@ -82,7 +98,7 @@ operating_domains:
       - no-github
     github_issue_sync:
       native_allowed: true
-      reason: Native sync is allowed only for WPRC repositories Brian controls; otherwise use relay-context-only.
+      reason: WPRC repositories Brian controls can use GitHub Issues Sync only as an explicit project exception; native PR/check/review/linkbacks remain enabled.
     default_checkpoint_cadence: weekly
 
   - key: personal
@@ -96,7 +112,7 @@ operating_domains:
       - no-github
     github_issue_sync:
       native_allowed: true
-      reason: Brian-owned Personal repositories can use native Linear-GitHub sync when project policy allows it.
+      reason: Brian-owned Personal repositories can use GitHub Issues Sync only as an explicit project exception; native PR/check/review/linkbacks remain enabled.
     default_checkpoint_cadence: weekly
 
 outcome_projects:
@@ -109,6 +125,7 @@ outcome_projects:
     linear_project_key: omega-docs-52bf4e874f4e
     linear_project_url: https://linear.app/brianseong/project/omega-docs-52bf4e874f4e
     sync_profile: relay-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       labels:
@@ -128,6 +145,7 @@ outcome_projects:
     linear_project_key: omega-interface-273cbf5a3e77
     linear_project_url: https://linear.app/brianseong/project/omega-interface-273cbf5a3e77
     sync_profile: relay-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       labels:
@@ -147,6 +165,7 @@ outcome_projects:
     linear_project_key: omega-zone-5a32a7b63051
     linear_project_url: https://linear.app/brianseong/project/omega-zone-5a32a7b63051
     sync_profile: relay-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       labels:
@@ -166,6 +185,7 @@ outcome_projects:
     linear_project_key: cfo-be02a199f79d
     linear_project_url: https://linear.app/brianseong/project/cfo-be02a199f79d
     sync_profile: native-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       full_sync_allowed: true
@@ -183,6 +203,7 @@ outcome_projects:
     linear_project_key: cmo-711310844a96
     linear_project_url: https://linear.app/brianseong/project/cmo-711310844a96
     sync_profile: native-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       full_sync_allowed: true
@@ -200,6 +221,7 @@ outcome_projects:
     linear_project_key: homelab-02e0c66d1cb8
     linear_project_url: https://linear.app/brianseong/project/homelab-02e0c66d1cb8
     sync_profile: native-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       full_sync_allowed: true
@@ -220,6 +242,7 @@ outcome_projects:
     linear_project_key: symphony-runtime-8653c153d70c
     linear_project_url: https://linear.app/brianseong/project/symphony-runtime-8653c153d70c
     sync_profile: relay-pr-only
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       labels:
@@ -241,6 +264,7 @@ outcome_projects:
     linear_project_key: miden-docs-680240ed98b4
     linear_project_url: https://linear.app/brianseong/project/miden-docs-680240ed98b4
     sync_profile: relay-pr-only
+    github_issues_sync: disabled
     repo_metadata:
       representation: custom_field
       labels:
@@ -260,6 +284,7 @@ outcome_projects:
     linear_project_key: miden-testnet-bridge-8b8433bd5df6
     linear_project_url: https://linear.app/brianseong/project/miden-testnet-bridge-8b8433bd5df6
     sync_profile: relay-pr-only
+    github_issues_sync: disabled
     repo_metadata:
       representation: custom_field
       labels:
@@ -279,6 +304,7 @@ outcome_projects:
     linear_project_key: miden-wallet-38c9281adaf0
     linear_project_url: https://linear.app/brianseong/project/miden-wallet-38c9281adaf0
     sync_profile: relay-pr-only
+    github_issues_sync: disabled
     repo_metadata:
       representation: custom_field
       labels:
@@ -298,6 +324,7 @@ outcome_projects:
     linear_project_key: 0xmiden-4fc6b09ebc56
     linear_project_url: https://linear.app/brianseong/project/0xmiden-4fc6b09ebc56
     sync_profile: no-github
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       labels:
@@ -317,6 +344,7 @@ outcome_projects:
     linear_project_key: agent-skills-5ec659ff9eda
     linear_project_url: https://linear.app/brianseong/project/agent-skills-5ec659ff9eda
     sync_profile: native-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       full_sync_allowed: true
@@ -334,6 +362,7 @@ outcome_projects:
     linear_project_key: personal-agent-skills-e46d9294e8b2
     linear_project_url: https://linear.app/brianseong/project/personal-agent-skills-e46d9294e8b2
     sync_profile: native-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       full_sync_allowed: true
@@ -351,6 +380,7 @@ outcome_projects:
     linear_project_key: resume-0fc5a6a66c98
     linear_project_url: https://linear.app/brianseong/project/resume-0fc5a6a66c98
     sync_profile: no-github
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       labels:
@@ -367,6 +397,7 @@ outcome_projects:
     linear_project_key: wprc-website-01241d2ad410
     linear_project_url: https://linear.app/brianseong/project/wprc-website-01241d2ad410
     sync_profile: native-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       full_sync_allowed: true
@@ -386,6 +417,7 @@ outcome_projects:
     linear_project_key: intelligence-stack-b469e20db47f
     linear_project_url: https://linear.app/brianseong/project/intelligence-stack-b469e20db47f
     sync_profile: native-full-sync
+    github_issues_sync: disabled
     repo_metadata:
       representation: metadata
       full_sync_allowed: true
