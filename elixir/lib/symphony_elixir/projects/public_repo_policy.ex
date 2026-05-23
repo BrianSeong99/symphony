@@ -122,9 +122,15 @@ defmodule SymphonyElixir.Projects.PublicRepoPolicy do
   end
 
   defp evaluate_full_sync_mutation(action, connection) do
-    case connection_mode(connection) do
-      "full_sync" -> require_capability(connection, required_capability(action))
-      _ -> {:block, :connection_mode_does_not_support_issue_mutation}
+    cond do
+      action == :edit_issue_body and connection_mode(connection) in ~w(issue_mirror full_sync) ->
+        require_capability(connection, required_capability(action))
+
+      connection_mode(connection) == "full_sync" ->
+        require_capability(connection, required_capability(action))
+
+      true ->
+        {:block, :connection_mode_does_not_support_issue_mutation}
     end
   end
 
