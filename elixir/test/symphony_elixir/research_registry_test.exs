@@ -53,6 +53,7 @@ defmodule SymphonyElixir.ResearchRegistryTest do
           "context-freshness-check",
           "loop-breaker",
           "final-green-pass",
+          "local-guidance-public-artifacts",
           "human-gated-rule-promotion",
           "simulation-before-production"
         ] do

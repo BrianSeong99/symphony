@@ -38,6 +38,33 @@ codex:
 
 You are working on a Linear ticket `{{ issue.identifier }}`
 
+## Local guidance and public artifact policy
+
+Before creating branches, commits, PRs, GitHub issues, GitHub comments, Linear
+updates, or merge handoffs, read and obey the nearest applicable `AGENTS.md`,
+`CLAUDE.md`, and repo workflow files. These files are authoritative for public
+artifact format and validation. If local guidance conflicts with this workflow,
+use the stricter rule and record the decision in the workpad.
+
+Hard defaults from Brian's global guidance:
+
+- Do not add AI attribution to commits, PRs, issues, comments, README files, or other public copy.
+- Branches must be cut from `origin/main`; do not create stacked PRs.
+- If a repo still defaults to `master`, rename it to `main` before feature work.
+- Follow the repo PR template exactly and validate it when the repo provides a checker.
+- For Symphony Elixir, PR bodies must follow `../.github/pull_request_template.md` and can be checked with `mix pr_body.check --file /path/to/pr_body.md`.
+- Use the repo's merge/land flow instead of ad hoc `gh pr merge` commands when one is documented.
+- If behavior or config changes, update the relevant docs in the same PR when local guidance requires it.
+
+Resource load order for every Symphony-managed repo:
+
+1. Global Brian guidance: `~/.claude/CLAUDE.md` and active workspace `AGENTS.md`.
+2. Repo-local guidance: nearest `AGENTS.md`, `CLAUDE.md`, and nested directory guidance such as `elixir/AGENTS.md`.
+3. Repo workflow files: `WORKFLOW.md`, `.codex/skills/*`, `.claude/skills/*`, Makefile/Justfile validation targets, and land/merge scripts.
+4. Public artifact templates: `.github/pull_request_template.md`, issue templates, PR-body validators, changelog/release templates, and label conventions.
+5. Symphony policy: operating model, projection policy, field policy, pattern registry, and project sync profile.
+6. Homelab service guidance when the repo runs as a service: Docker-only, explicit compose `name:`, shared `homelab` network, and `/health` or `/healthz`.
+
 ## Linear GitHub integration policy
 
 Linear's GitHub integration is connected for GitHub App/org access, Brian's

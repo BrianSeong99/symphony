@@ -136,6 +136,25 @@ patterns:
       can_weaken_hard_gates: false
       human_approval_required: false
 
+  - key: local-guidance-public-artifacts
+    summary: "Use repo and workspace guidance as the source of truth for branches, PRs, merges, and public copy."
+    origin_sources:
+      - brian-global-claude
+      - labs-agents
+      - repo-agents
+      - repo-claude
+    enforces:
+      - "read nearest AGENTS.md and CLAUDE.md before GitHub or Linear mutations"
+      - "cut every branch from main and avoid stacked PRs"
+      - "suppress AI attribution in commits, PRs, issues, comments, and public docs"
+      - "follow repo PR templates and run repo PR body validators when available"
+      - "use documented land or merge flow instead of ad hoc merge commands"
+      - "update required docs when behavior or config changes"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
   - key: human-gated-rule-promotion
     summary: "Allow learning to propose rules, but keep sensitive policy changes human-owned."
     origin_sources:
