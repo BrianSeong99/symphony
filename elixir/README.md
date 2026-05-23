@@ -80,6 +80,12 @@ Pass a custom workflow file path to `./bin/symphony` when starting the service:
 
 If no path is passed, Symphony defaults to `./WORKFLOW.md`.
 
+The shared Linear operating model lives at `../config/symphony/linear-operating-model.yml`.
+It maps Linear teams to operating domains, Linear projects to outcomes, and repositories to
+metadata, labels, or custom fields. `SymphonyElixir.Linear.OperatingModel` loads and validates
+that model, including sync-profile policy such as Miden blocking native GitHub issue sync while
+Homelab/Personal permits native Linear-GitHub sync.
+
 Optional flags:
 
 - `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)

@@ -1,0 +1,181 @@
+version: 1
+
+sync_profiles:
+  - native-full-sync
+  - relay-full-sync
+  - relay-pr-only
+  - relay-context-only
+  - no-github
+
+checkpoint_cadence:
+  default: weekly
+  project_overrides:
+    guardian-launch: twice-weekly
+    wallet-prd: twice-weekly
+    chainless-alpha: twice-weekly
+
+project_policy:
+  default_project_unit: outcome
+  outcome_projects:
+    preferred: true
+  repos:
+    project_unit: metadata
+    allowed_representations:
+      - metadata
+      - label
+      - custom_field
+
+operating_domains:
+  - key: homelab-personal
+    name: Homelab/Personal
+    linear_team_key: HOM
+    allowed_sync_profiles:
+      - native-full-sync
+      - relay-full-sync
+      - relay-pr-only
+      - relay-context-only
+      - no-github
+    github_issue_sync:
+      native_allowed: true
+    default_checkpoint_cadence: weekly
+
+  - key: miden
+    name: Miden
+    linear_team_key: MID
+    allowed_sync_profiles:
+      - relay-full-sync
+      - relay-pr-only
+      - relay-context-only
+      - no-github
+    github_issue_sync:
+      native_allowed: false
+      reason: Public upstream repositories should not use native Linear-GitHub issue sync.
+    default_checkpoint_cadence: twice-weekly
+
+  - key: chainless
+    name: Chainless
+    linear_team_key: CHN
+    allowed_sync_profiles:
+      - relay-full-sync
+      - relay-pr-only
+      - relay-context-only
+    github_issue_sync:
+      native_allowed: false
+    default_checkpoint_cadence: twice-weekly
+
+  - key: wprc
+    name: WPRC
+    linear_team_key: WPRC
+    allowed_sync_profiles:
+      - relay-context-only
+      - no-github
+    github_issue_sync:
+      native_allowed: false
+    default_checkpoint_cadence: weekly
+
+  - key: symphony
+    name: Symphony
+    linear_team_key: SYM
+    allowed_sync_profiles:
+      - relay-full-sync
+      - relay-pr-only
+      - relay-context-only
+    github_issue_sync:
+      native_allowed: false
+    default_checkpoint_cadence: weekly
+
+outcome_projects:
+  - key: guardian-launch
+    name: Guardian launch
+    operating_domain: miden
+    linear_project_key: MID-GUARDIAN
+    sync_profile: relay-context-only
+    repo_metadata:
+      representation: metadata
+      labels:
+        - repo:guardian-sdk
+      custom_fields:
+        github_repository: 0xMiden/guardian-sdk
+    policy_overrides:
+      human_checkpoint_required: true
+
+  - key: wallet-prd
+    name: Wallet PRD
+    operating_domain: miden
+    linear_project_key: MID-WALLET
+    sync_profile: relay-context-only
+    repo_metadata:
+      representation: custom_field
+      labels:
+        - repo:wallet
+      custom_fields:
+        github_repository: 0xMiden/miden-wallet
+    policy_overrides:
+      docs_first: true
+
+  - key: pioneer-integrations
+    name: Pioneer integrations
+    operating_domain: miden
+    linear_project_key: MID-PIONEERS
+    sync_profile: relay-pr-only
+    repo_metadata:
+      representation: label
+      labels:
+        - repo:miden-docs
+        - repo:miden-client
+      custom_fields:
+        partner_program: pioneers
+
+  - key: homelab-runtime
+    name: Homelab runtime
+    operating_domain: homelab-personal
+    linear_project_key: HOM-RUNTIME
+    sync_profile: native-full-sync
+    repo_metadata:
+      representation: metadata
+      labels:
+        - repo:homelab
+      custom_fields:
+        github_repository: BrianSeong99/homelab
+    policy_overrides:
+      docker_required: true
+      health_endpoint_required: true
+
+  - key: wprc-website
+    name: WPRC website
+    operating_domain: wprc
+    linear_project_key: WPRC-WEBSITE
+    sync_profile: relay-context-only
+    repo_metadata:
+      representation: custom_field
+      labels:
+        - repo:wprc-website
+      custom_fields:
+        github_repository: BrianSeong99/wprc-website
+
+  - key: chainless-alpha
+    name: Chainless alpha
+    operating_domain: chainless
+    linear_project_key: CHN-ALPHA
+    sync_profile: relay-full-sync
+    repo_metadata:
+      representation: metadata
+      labels:
+        - repo:omega-markets
+        - repo:omega-interface
+      custom_fields:
+        github_org: TheChainlessLabs
+    policy_overrides:
+      human_checkpoint_required: true
+
+  - key: symphony-linear-cockpit
+    name: Symphony Linear cockpit
+    operating_domain: symphony
+    linear_project_key: SYM-LINEAR
+    sync_profile: relay-pr-only
+    repo_metadata:
+      representation: metadata
+      labels:
+        - repo:symphony
+      custom_fields:
+        github_repository: BrianSeong99/symphony
