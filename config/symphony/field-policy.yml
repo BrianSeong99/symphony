@@ -1,0 +1,119 @@
+version: 1
+default_profile: symphony
+
+fields:
+  title:
+    owner: linear
+    linear: read_write
+    symphony: read_write
+    github: projection
+  status:
+    owner: linear
+    linear: read_write
+    symphony: read_write
+    github: none
+  planning_notes:
+    owner: linear_or_symphony_private
+    linear: private
+    symphony: private
+    github: blocked
+  workpad:
+    owner: symphony
+    linear: summary_projection
+    symphony: private
+    github: blocked
+  dependencies:
+    owner: symphony
+    linear: projection
+    symphony: read_write
+    github: projection
+  agent_memory:
+    owner: symphony
+    linear: blocked
+    symphony: private
+    github: blocked
+  pr_state:
+    owner: github
+    linear: ingest_projection
+    symphony: ingest
+    github: read_write
+  checks:
+    owner: github
+    linear: ingest_projection
+    symphony: ingest
+    github: read_write
+  public_comments:
+    owner: relay_gated
+    linear: projection
+    symphony: approval_required
+    github: approval_required
+  private_comments:
+    owner: linear_or_symphony_private
+    linear: private
+    symphony: private
+    github: blocked
+  validation:
+    owner: symphony
+    linear: summary_projection
+    symphony: read_write
+    github: status_projection
+  run_metrics:
+    owner: symphony
+    linear: summary_projection
+    symphony: read_write
+    github: blocked
+
+profiles:
+  homelab:
+    operating_domain: homelab-personal
+    workspace: labs
+    github_profile: owned-full-sync
+    public_projection: allowed
+    approval_required:
+      - public_comments
+  personal:
+    operating_domain: homelab-personal
+    workspace: personal
+    github_profile: owned-full-sync
+    public_projection: allowed
+    approval_required:
+      - public_comments
+  wprc:
+    operating_domain: wprc
+    workspace: wprc
+    github_profile: controlled-native-or-relay
+    public_projection: conditional
+    approval_required:
+      - public_comments
+  chainless:
+    operating_domain: chainless
+    workspace: chainless
+    github_profile: existing-team-aware-relay
+    public_projection: restricted
+    approval_required:
+      - title
+      - status
+      - public_comments
+      - workpad
+  miden:
+    operating_domain: miden
+    workspace: miden
+    github_profile: public-relay-only
+    public_projection: restricted
+    blocked_github_fields:
+      - planning_notes
+      - workpad
+      - agent_memory
+      - private_comments
+      - run_metrics
+    approval_required:
+      - public_comments
+      - dependencies
+      - validation
+  symphony:
+    operating_domain: symphony
+    workspace: labs
+    github_profile: private-runtime
+    public_projection: restricted
+    approval_required:
+      - public_comments
