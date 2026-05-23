@@ -49,6 +49,14 @@ defmodule SymphonyElixir.HomelabFullSyncTest do
     assert_receive {:performed, %{action: "sync_pr_link"}}
   end
 
+  test "marks native GitHub integration separately from GitHub Issues Sync" do
+    connection = FullSync.config!() |> FullSync.connection!()
+
+    assert connection.settings.linear_github_integration == true
+    assert connection.settings.linear_github_issues_sync == false
+    assert connection.settings.source_of_truth == "symphony"
+  end
+
   test "keeps Symphony runtime memory canonical while mirroring safe summaries" do
     plan = FullSync.plan_handoff(handoff_attrs())
 

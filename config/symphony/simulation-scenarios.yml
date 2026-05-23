@@ -376,7 +376,7 @@ scenarios:
       agent:
         workpad_amendments:
           - section: Scope Interpretation
-            text: Controlled permissions allow native GitHub issue sync.
+            text: Controlled permissions allow native PR, check, review, and linkback integration; GitHub Issues Sync stays disabled by default.
     linear_accept:
       approved_kinds:
         - workpad_amendment

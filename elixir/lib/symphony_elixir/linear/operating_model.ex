@@ -5,6 +5,20 @@ defmodule SymphonyElixir.Linear.OperatingModel do
 
   @required_domain_keys ["labs", "miden", "chainless", "wprc", "personal"]
   @sync_profiles ["native-full-sync", "relay-full-sync", "relay-pr-only", "relay-context-only", "no-github"]
+  @github_issue_sync_modes ["disabled", "explicit_exception"]
+  @required_github_integration %{
+    "github_app_org_access" => "connected",
+    "personal_account_connection" => "connected",
+    "private_repositories" => "enabled",
+    "branch_format" => "enabled",
+    "linkbacks" => "enabled",
+    "pr_linking" => "enabled",
+    "commit_linking" => "enabled",
+    "checks" => "enabled",
+    "reviews" => "enabled",
+    "github_issues_sync_default" => "disabled",
+    "native_issue_sync_policy" => "explicit_exception_only"
+  }
 
   @type model :: map()
   @type validation_result :: :ok | {:error, [String.t()]}
@@ -32,6 +46,7 @@ defmodule SymphonyElixir.Linear.OperatingModel do
       []
       |> validate_version(model)
       |> validate_sync_profiles(model)
+      |> validate_github_integration(model)
       |> validate_project_policy(model)
       |> validate_domains(model)
       |> validate_projects(model)
@@ -47,6 +62,15 @@ defmodule SymphonyElixir.Linear.OperatingModel do
 
   @spec sync_profiles(model()) :: [String.t()]
   def sync_profiles(model), do: Map.get(model, "sync_profiles", [])
+
+  @spec github_integration(model()) :: map()
+  def github_integration(model), do: Map.get(model, "github_integration", %{})
+
+  @spec github_issue_sync_default(model()) :: String.t() | nil
+  def github_issue_sync_default(model), do: get_in(model, ["github_integration", "github_issues_sync_default"])
+
+  @spec project_github_issues_sync(model(), String.t()) :: String.t() | nil
+  def project_github_issues_sync(model, project_key), do: Map.get(outcome_project!(model, project_key), "github_issues_sync")
 
   @spec default_project_unit(model()) :: String.t() | nil
   def default_project_unit(model), do: get_in(model, ["project_policy", "default_project_unit"])
@@ -112,6 +136,19 @@ defmodule SymphonyElixir.Linear.OperatingModel do
     end
   end
 
+  defp validate_github_integration(errors, model) do
+    integration = github_integration(model)
+
+    @required_github_integration
+    |> Enum.reduce(errors, fn {key, expected}, acc ->
+      if Map.get(integration, key) == expected do
+        acc
+      else
+        ["github_integration.#{key} must be #{expected}" | acc]
+      end
+    end)
+  end
+
   defp validate_project_policy(errors, model) do
     if default_project_unit(model) == "homelab_project" do
       errors
@@ -170,6 +207,7 @@ defmodule SymphonyElixir.Linear.OperatingModel do
       acc
       |> validate_project_domain(model, project_key, project)
       |> validate_project_sync_profile(model, project_key, project)
+      |> validate_project_github_issues_sync(model, project_key, project)
       |> validate_project_repo_metadata(project_key, project)
     end)
   end
@@ -221,14 +259,31 @@ defmodule SymphonyElixir.Linear.OperatingModel do
       sync_profile not in @sync_profiles ->
         {:error, ["outcome_projects.#{project_key}.sync_profile is unsupported"]}
 
-      operating_domain == "miden" and native_github_issue_sync?(sync_profile) ->
-        {:error, ["outcome_projects.#{project_key}.sync_profile cannot use native GitHub issue sync for Miden"]}
-
       sync_profile not in allowed_profiles ->
         {:error, ["outcome_projects.#{project_key}.sync_profile is not allowed for #{operating_domain}"]}
 
       true ->
         :ok
+    end
+  end
+
+  defp validate_project_github_issues_sync(errors, model, project_key, project) do
+    mode = Map.get(project, "github_issues_sync")
+    operating_domain = Map.get(project, "operating_domain")
+    domain = get_in(model, ["operating_domains", operating_domain])
+
+    cond do
+      mode not in @github_issue_sync_modes ->
+        ["outcome_projects.#{project_key}.github_issues_sync must be disabled or explicit_exception" | errors]
+
+      mode == "explicit_exception" and github_issue_sync_default(model) != "disabled" ->
+        ["outcome_projects.#{project_key}.github_issues_sync explicit exceptions require a disabled default" | errors]
+
+      mode == "explicit_exception" and not native_allowed?(domain) ->
+        ["outcome_projects.#{project_key}.github_issues_sync explicit exception is not allowed for #{operating_domain}" | errors]
+
+      true ->
+        errors
     end
   end
 
@@ -243,7 +298,4 @@ defmodule SymphonyElixir.Linear.OperatingModel do
   end
 
   defp native_allowed?(domain), do: get_in(domain, ["github_issue_sync", "native_allowed"]) == true
-
-  defp native_github_issue_sync?("native-full-sync"), do: true
-  defp native_github_issue_sync?(_sync_profile), do: false
 end

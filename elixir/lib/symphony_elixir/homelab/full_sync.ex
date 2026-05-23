@@ -1,10 +1,11 @@
 defmodule SymphonyElixir.Homelab.FullSync do
   @moduledoc """
-  Homelab native Linear/GitHub full-sync handoff contract.
+  Homelab native Linear/GitHub integration handoff contract.
 
-  Homelab is Brian's owned validation project, so it can use native GitHub issue
-  sync while Symphony still owns private runtime memory, validation state,
-  dependency DAGs, and audit trails.
+  Homelab is Brian's owned validation project, so it can use native PR, commit,
+  check, review, branch, and linkback integration while GitHub Issues Sync stays
+  disabled unless a project explicitly opts into it. Symphony still owns private
+  runtime memory, validation state, dependency DAGs, and audit trails.
   """
 
   alias SymphonyElixir.GitHubSync
@@ -89,7 +90,11 @@ defmodule SymphonyElixir.Homelab.FullSync do
       repo: Map.fetch!(config, :github_repo),
       status: "active",
       capabilities: @full_sync_capabilities,
-      settings: %{linear_native_sync: true, source_of_truth: "symphony"}
+      settings: %{
+        linear_github_integration: true,
+        linear_github_issues_sync: false,
+        source_of_truth: "symphony"
+      }
     }
   end
 

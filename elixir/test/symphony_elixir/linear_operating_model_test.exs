@@ -72,20 +72,70 @@ defmodule SymphonyElixir.Linear.OperatingModelTest do
     assert OperatingModel.checkpoint_cadence(model, "wprc-website") == "weekly"
   end
 
-  test "Miden cannot use native GitHub issue sync" do
+  test "records GitHub integration separately from GitHub Issues Sync" do
+    assert {:ok, model} = OperatingModel.load_file(@config_path)
+
+    assert OperatingModel.github_integration(model)
+           |> Map.take([
+             "github_app_org_access",
+             "personal_account_connection",
+             "private_repositories",
+             "branch_format",
+             "linkbacks",
+             "pr_linking",
+             "commit_linking",
+             "checks",
+             "reviews",
+             "github_issues_sync_default",
+             "native_issue_sync_policy"
+           ]) == %{
+             "github_app_org_access" => "connected",
+             "personal_account_connection" => "connected",
+             "private_repositories" => "enabled",
+             "branch_format" => "enabled",
+             "linkbacks" => "enabled",
+             "pr_linking" => "enabled",
+             "commit_linking" => "enabled",
+             "checks" => "enabled",
+             "reviews" => "enabled",
+             "github_issues_sync_default" => "disabled",
+             "native_issue_sync_policy" => "explicit_exception_only"
+           }
+
+    assert OperatingModel.github_issue_sync_default(model) == "disabled"
+
+    assert Enum.all?(OperatingModel.outcome_project_keys(model), fn project_key ->
+             OperatingModel.project_github_issues_sync(model, project_key) == "disabled"
+           end)
+  end
+
+  test "Miden cannot use native full-sync profile" do
     assert {:ok, model} = OperatingModel.load_file(@config_path)
     miden_native = put_in(model, ["outcome_projects", "docs", "sync_profile"], "native-full-sync")
 
     assert {:error, errors} = OperatingModel.validate(miden_native)
-    assert "outcome_projects.docs.sync_profile cannot use native GitHub issue sync for Miden" in errors
+    assert "outcome_projects.docs.sync_profile is not allowed for miden" in errors
   end
 
-  test "Homelab can use native Linear-GitHub sync" do
+  test "Homelab can use native Linear-GitHub integration without issue sync" do
     assert {:ok, model} = OperatingModel.load_file(@config_path)
 
     assert :ok = OperatingModel.validate_project_sync_profile(model, "homelab", "native-full-sync")
+    assert OperatingModel.project_github_issues_sync(model, "homelab") == "disabled"
     assert get_in(model, ["outcome_projects", "homelab", "repo_metadata", "full_sync_allowed"]) == true
     refute get_in(model, ["outcome_projects", "docs", "repo_metadata", "full_sync_allowed"]) == true
+  end
+
+  test "GitHub Issues Sync requires an explicit eligible project exception" do
+    assert {:ok, model} = OperatingModel.load_file(@config_path)
+
+    eligible_exception = put_in(model, ["outcome_projects", "homelab", "github_issues_sync"], "explicit_exception")
+    assert :ok = OperatingModel.validate(eligible_exception)
+
+    ineligible_exception = put_in(model, ["outcome_projects", "docs", "github_issues_sync"], "explicit_exception")
+    assert {:error, errors} = OperatingModel.validate(ineligible_exception)
+
+    assert "outcome_projects.docs.github_issues_sync explicit exception is not allowed for miden" in errors
   end
 
   test "rejects unknown domains, workspace mismatches, and repo-as-project defaults" do
