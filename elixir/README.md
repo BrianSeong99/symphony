@@ -86,6 +86,11 @@ metadata, labels, or custom fields. `SymphonyElixir.Linear.OperatingModel` loads
 that model, including sync-profile policy such as Miden blocking native GitHub issue sync while
 Homelab/Personal permits native Linear-GitHub sync.
 
+`SymphonyElixir.Linear.Intake` normalizes Linear Intelligence and Agent workflow outputs into
+proposed triage metadata, workpad amendments, spec amendments, dependencies, checkpoint requests,
+and project metadata. Suggestions remain proposed unless an explicit approval or configured policy
+accepts them; policy conflicts are rejected with audit-event-compatible records.
+
 Optional flags:
 
 - `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)
