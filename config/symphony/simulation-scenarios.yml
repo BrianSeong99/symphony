@@ -42,7 +42,7 @@ scenarios:
           - homelab
           - runtime
         owner: Brian
-        project: homelab-runtime
+        project: homelab
         priority: high
       agent:
         dependencies:
@@ -188,7 +188,7 @@ scenarios:
           - miden
           - guardian
         owner: Brian
-        project: guardian-launch
+        project: miden-wallet
         priority: high
       agent:
         dependencies:
@@ -283,7 +283,7 @@ scenarios:
           - chainless
           - relay
         owner: Brian
-        project: chainless-alpha
+        project: omega-interface
         priority: medium
       agent:
         dependencies:
@@ -296,8 +296,8 @@ scenarios:
         - workpad_amendment
         - dependency
     project:
-      name: Chainless Alpha
-      slug: chainless-alpha
+      name: Omega Interface
+      slug: omega-interface
       workspace: chainless
     github:
       connection_mode: pr_only

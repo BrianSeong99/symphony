@@ -10,14 +10,18 @@ sync_profiles:
 checkpoint_cadence:
   default: weekly
   project_overrides:
-    guardian-launch: twice-weekly
-    wallet-prd: twice-weekly
-    chainless-alpha: twice-weekly
+    symphony: twice-weekly
+    docs: twice-weekly
+    miden-testnet-bridge: twice-weekly
+    miden-wallet: twice-weekly
+    omega-interface: twice-weekly
+    omega-zone: twice-weekly
 
 project_policy:
-  default_project_unit: outcome
-  outcome_projects:
+  default_project_unit: homelab_project
+  homelab_projects:
     preferred: true
+    source_file: /Users/brianseong/Develop/Labs/homelab/data/v3/state.yaml
   repos:
     project_unit: metadata
     allowed_representations:
@@ -26,22 +30,37 @@ project_policy:
       - custom_field
 
 operating_domains:
-  - key: homelab-personal
-    name: Homelab/Personal
-    linear_team_key: HOM
+  - key: labs
+    name: Labs
+    homelab_workspace_id: labs
+    linear_team_key: LAB
     allowed_sync_profiles:
       - native-full-sync
-      - relay-full-sync
       - relay-pr-only
       - relay-context-only
       - no-github
     github_issue_sync:
       native_allowed: true
+      reason: Brian-owned Labs repositories can use native Linear-GitHub sync when project policy allows it.
     default_checkpoint_cadence: weekly
 
   - key: miden
     name: Miden
+    homelab_workspace_id: miden
     linear_team_key: MID
+    allowed_sync_profiles:
+      - relay-pr-only
+      - relay-context-only
+      - no-github
+    github_issue_sync:
+      native_allowed: false
+      reason: Miden repositories are public/company-owned surfaces; GitHub receives only policy-gated downstream context.
+    default_checkpoint_cadence: twice-weekly
+
+  - key: chainless
+    name: Chainless
+    homelab_workspace_id: chainless
+    linear_team_key: OMA
     allowed_sync_profiles:
       - relay-full-sync
       - relay-pr-only
@@ -49,25 +68,16 @@ operating_domains:
       - no-github
     github_issue_sync:
       native_allowed: false
-      reason: Public upstream repositories should not use native Linear-GitHub issue sync.
-    default_checkpoint_cadence: twice-weekly
-
-  - key: chainless
-    name: Chainless
-    linear_team_key: CHN
-    allowed_sync_profiles:
-      - relay-full-sync
-      - relay-pr-only
-      - relay-context-only
-    github_issue_sync:
-      native_allowed: false
+      reason: Respect the existing Omega/Chainless team workflow and relay only safe summaries or PR associations.
     default_checkpoint_cadence: twice-weekly
 
   - key: wprc
     name: WPRC
+    homelab_workspace_id: wprc
     linear_team_key: WPRC
     allowed_sync_profiles:
       - native-full-sync
+      - relay-pr-only
       - relay-context-only
       - no-github
     github_issue_sync:
@@ -75,63 +85,120 @@ operating_domains:
       reason: Native sync is allowed only for WPRC repositories Brian controls; otherwise use relay-context-only.
     default_checkpoint_cadence: weekly
 
-  - key: symphony
-    name: Symphony
-    linear_team_key: SYM
+  - key: personal
+    name: Personal
+    homelab_workspace_id: personal
+    linear_team_key: PER
     allowed_sync_profiles:
-      - relay-full-sync
+      - native-full-sync
       - relay-pr-only
       - relay-context-only
+      - no-github
     github_issue_sync:
-      native_allowed: false
+      native_allowed: true
+      reason: Brian-owned Personal repositories can use native Linear-GitHub sync when project policy allows it.
     default_checkpoint_cadence: weekly
 
 outcome_projects:
-  - key: guardian-launch
-    name: Guardian launch
-    operating_domain: miden
-    linear_project_key: MID-GUARDIAN
-    sync_profile: relay-context-only
+  - key: omega-docs
+    name: Omega Docs
+    operating_domain: chainless
+    homelab_workspace_id: chainless
+    homelab_project_id: omega-docs
+    homelab_path: /Users/brianseong/Develop/Chainless/omega-docs
+    linear_project_key: omega-docs-52bf4e874f4e
+    linear_project_url: https://linear.app/brianseong/project/omega-docs-52bf4e874f4e
+    sync_profile: relay-full-sync
     repo_metadata:
       representation: metadata
       labels:
-        - repo:guardian-sdk
+        - repo:omega-docs
       custom_fields:
-        github_repository: 0xMiden/guardian-sdk
+        github_repository: TheChainlessLabs/omega-docs
+        github_org: TheChainlessLabs
     policy_overrides:
       human_checkpoint_required: true
 
-  - key: wallet-prd
-    name: Wallet PRD
-    operating_domain: miden
-    linear_project_key: MID-WALLET
-    sync_profile: relay-context-only
+  - key: omega-interface
+    name: Omega Interface
+    operating_domain: chainless
+    homelab_workspace_id: chainless
+    homelab_project_id: omega-interface
+    homelab_path: /Users/brianseong/Develop/Chainless/omega-interface
+    linear_project_key: omega-interface-273cbf5a3e77
+    linear_project_url: https://linear.app/brianseong/project/omega-interface-273cbf5a3e77
+    sync_profile: relay-full-sync
     repo_metadata:
-      representation: custom_field
+      representation: metadata
       labels:
-        - repo:wallet
+        - repo:omega-interface
       custom_fields:
-        github_repository: 0xMiden/miden-wallet
+        github_repository: TheChainlessLabs/omega-interface
+        github_org: TheChainlessLabs
     policy_overrides:
-      docs_first: true
+      human_checkpoint_required: true
 
-  - key: pioneer-integrations
-    name: Pioneer integrations
-    operating_domain: miden
-    linear_project_key: MID-PIONEERS
-    sync_profile: relay-pr-only
+  - key: omega-zone
+    name: Omega Zone
+    operating_domain: chainless
+    homelab_workspace_id: chainless
+    homelab_project_id: omega-zone
+    homelab_path: /Users/brianseong/Develop/Chainless/omega-zone
+    linear_project_key: omega-zone-5a32a7b63051
+    linear_project_url: https://linear.app/brianseong/project/omega-zone-5a32a7b63051
+    sync_profile: relay-full-sync
     repo_metadata:
-      representation: label
+      representation: metadata
       labels:
-        - repo:miden-docs
-        - repo:miden-client
+        - repo:omega-zone
       custom_fields:
-        partner_program: pioneers
+        github_repository: TheChainlessLabs/omega-zone
+        github_org: TheChainlessLabs
+    policy_overrides:
+      human_checkpoint_required: true
 
-  - key: homelab-runtime
-    name: Homelab runtime
-    operating_domain: homelab-personal
-    linear_project_key: HOM-RUNTIME
+  - key: cfo
+    name: CFO
+    operating_domain: labs
+    homelab_workspace_id: labs
+    homelab_project_id: cfo
+    homelab_path: /Users/brianseong/Develop/Labs/Finance-OS/cfo
+    linear_project_key: cfo-be02a199f79d
+    linear_project_url: https://linear.app/brianseong/project/cfo-be02a199f79d
+    sync_profile: native-full-sync
+    repo_metadata:
+      representation: metadata
+      full_sync_allowed: true
+      labels:
+        - repo:finance-os
+      custom_fields:
+        github_repository: BrianSeong99/finance-os
+
+  - key: cmo
+    name: CMO
+    operating_domain: labs
+    homelab_workspace_id: labs
+    homelab_project_id: cmo
+    homelab_path: /Users/brianseong/Develop/Labs/Marketing-OS/cmo
+    linear_project_key: cmo-711310844a96
+    linear_project_url: https://linear.app/brianseong/project/cmo-711310844a96
+    sync_profile: native-full-sync
+    repo_metadata:
+      representation: metadata
+      full_sync_allowed: true
+      labels:
+        - repo:cmo
+      custom_fields:
+        github_repository: BrianSeong99/cmo
+
+  - key: homelab
+    name: Homelab
+    operating_domain: labs
+    homelab_workspace_id: labs
+    homelab_project_id: homelab
+    homelab_path: /Users/brianseong/Develop/Labs/homelab
+    linear_project_key: homelab-02e0c66d1cb8
+    linear_project_url: https://linear.app/brianseong/project/homelab-02e0c66d1cb8
     sync_profile: native-full-sync
     repo_metadata:
       representation: metadata
@@ -144,37 +211,14 @@ outcome_projects:
       docker_required: true
       health_endpoint_required: true
 
-  - key: wprc-website
-    name: WPRC website
-    operating_domain: wprc
-    linear_project_key: WPRC-WEBSITE
-    sync_profile: relay-context-only
-    repo_metadata:
-      representation: custom_field
-      labels:
-        - repo:wprc-website
-      custom_fields:
-        github_repository: BrianSeong99/wprc-website
-
-  - key: chainless-alpha
-    name: Chainless alpha
-    operating_domain: chainless
-    linear_project_key: CHN-ALPHA
-    sync_profile: relay-full-sync
-    repo_metadata:
-      representation: metadata
-      labels:
-        - repo:omega-markets
-        - repo:omega-interface
-      custom_fields:
-        github_org: TheChainlessLabs
-    policy_overrides:
-      human_checkpoint_required: true
-
-  - key: symphony-linear-cockpit
-    name: Symphony Linear cockpit
-    operating_domain: symphony
-    linear_project_key: SYM-LINEAR
+  - key: symphony
+    name: Symphony Runtime
+    operating_domain: labs
+    homelab_workspace_id: labs
+    homelab_project_id: symphony
+    homelab_path: /Users/brianseong/Develop/Labs/symphony
+    linear_project_key: symphony-runtime-8653c153d70c
+    linear_project_url: https://linear.app/brianseong/project/symphony-runtime-8653c153d70c
     sync_profile: relay-pr-only
     repo_metadata:
       representation: metadata
@@ -182,3 +226,172 @@ outcome_projects:
         - repo:symphony
       custom_fields:
         github_repository: BrianSeong99/symphony
+        upstream_repository: openai/symphony
+    policy_overrides:
+      docker_required: true
+      health_endpoint_required: true
+      private_runtime_memory: true
+
+  - key: docs
+    name: Miden Docs
+    operating_domain: miden
+    homelab_workspace_id: miden
+    homelab_project_id: docs
+    homelab_path: /Users/brianseong/Develop/Miden/0xMiden/docs
+    linear_project_key: miden-docs-680240ed98b4
+    linear_project_url: https://linear.app/brianseong/project/miden-docs-680240ed98b4
+    sync_profile: relay-pr-only
+    repo_metadata:
+      representation: custom_field
+      labels:
+        - repo:docs
+      custom_fields:
+        github_repository: 0xMiden/docs
+    policy_overrides:
+      human_checkpoint_required: true
+      public_safe_only: true
+
+  - key: miden-testnet-bridge
+    name: Miden Testnet Bridge
+    operating_domain: miden
+    homelab_workspace_id: miden
+    homelab_project_id: miden-testnet-bridge
+    homelab_path: /Users/brianseong/Develop/Miden/Projects/miden-testnet-bridge
+    linear_project_key: miden-testnet-bridge-8b8433bd5df6
+    linear_project_url: https://linear.app/brianseong/project/miden-testnet-bridge-8b8433bd5df6
+    sync_profile: relay-pr-only
+    repo_metadata:
+      representation: custom_field
+      labels:
+        - repo:miden-testnet-bridge
+      custom_fields:
+        github_repository: BrianSeong99/miden-testnet-bridge
+    policy_overrides:
+      human_checkpoint_required: true
+      public_safe_only: true
+
+  - key: miden-wallet
+    name: Miden Wallet
+    operating_domain: miden
+    homelab_workspace_id: miden
+    homelab_project_id: miden-wallet
+    homelab_path: /Users/brianseong/Develop/Miden/Projects/miden_wallet/wallet
+    linear_project_key: miden-wallet-38c9281adaf0
+    linear_project_url: https://linear.app/brianseong/project/miden-wallet-38c9281adaf0
+    sync_profile: relay-pr-only
+    repo_metadata:
+      representation: custom_field
+      labels:
+        - repo:wallet
+      custom_fields:
+        github_repository: 0xMiden/wallet
+    policy_overrides:
+      human_checkpoint_required: true
+      public_safe_only: true
+
+  - key: 0xmiden
+    name: 0xMiden
+    operating_domain: miden
+    homelab_workspace_id: miden
+    homelab_project_id: 0xmiden
+    homelab_path: /Users/brianseong/Develop/Miden/0xMiden
+    linear_project_key: 0xmiden-4fc6b09ebc56
+    linear_project_url: https://linear.app/brianseong/project/0xmiden-4fc6b09ebc56
+    sync_profile: no-github
+    repo_metadata:
+      representation: metadata
+      labels:
+        - workspace:0xmiden
+      custom_fields:
+        github_repository: null
+    policy_overrides:
+      human_checkpoint_required: true
+      public_safe_only: true
+
+  - key: agent-skills
+    name: Agent Skills
+    operating_domain: personal
+    homelab_workspace_id: personal
+    homelab_project_id: agent-skills
+    homelab_path: /Users/brianseong/Develop/Personal/agent-skills
+    linear_project_key: agent-skills-5ec659ff9eda
+    linear_project_url: https://linear.app/brianseong/project/agent-skills-5ec659ff9eda
+    sync_profile: native-full-sync
+    repo_metadata:
+      representation: metadata
+      full_sync_allowed: true
+      labels:
+        - repo:agent-skills
+      custom_fields:
+        github_repository: BrianSeong99/agent-skills
+
+  - key: personal-agent-skills
+    name: Personal Agent Skills
+    operating_domain: personal
+    homelab_workspace_id: personal
+    homelab_project_id: personal-agent-skills
+    homelab_path: /Users/brianseong/Develop/Personal/personal-agent-skills
+    linear_project_key: personal-agent-skills-e46d9294e8b2
+    linear_project_url: https://linear.app/brianseong/project/personal-agent-skills-e46d9294e8b2
+    sync_profile: native-full-sync
+    repo_metadata:
+      representation: metadata
+      full_sync_allowed: true
+      labels:
+        - repo:personal-agent-skills
+      custom_fields:
+        github_repository: BrianSeong99/personal-agent-skills
+
+  - key: resume
+    name: Resume
+    operating_domain: personal
+    homelab_workspace_id: personal
+    homelab_project_id: resume
+    homelab_path: /Users/brianseong/Develop/Personal/Resume
+    linear_project_key: resume-0fc5a6a66c98
+    linear_project_url: https://linear.app/brianseong/project/resume-0fc5a6a66c98
+    sync_profile: no-github
+    repo_metadata:
+      representation: metadata
+      labels:
+        - project:resume
+      custom_fields:
+        github_repository: null
+
+  - key: wprc-website
+    name: WPRC Website
+    operating_domain: wprc
+    homelab_workspace_id: wprc
+    homelab_project_id: wprc-website
+    homelab_path: /Users/brianseong/Develop/WPRC/wprc-website
+    linear_project_key: wprc-website-01241d2ad410
+    linear_project_url: https://linear.app/brianseong/project/wprc-website-01241d2ad410
+    sync_profile: native-full-sync
+    repo_metadata:
+      representation: metadata
+      full_sync_allowed: true
+      labels:
+        - repo:wprc-website
+      custom_fields:
+        github_repository: Whitepaper-Reading-Club/wprc-website
+    policy_overrides:
+      community_safe_summary_required: true
+
+  - key: intelligence-stack
+    name: Intelligence Stack
+    operating_domain: wprc
+    homelab_workspace_id: wprc
+    homelab_project_id: intelligence-stack
+    homelab_path: /Users/brianseong/Develop/WPRC/intelligence-stack
+    linear_project_key: intelligence-stack-b469e20db47f
+    linear_project_url: https://linear.app/brianseong/project/intelligence-stack-b469e20db47f
+    sync_profile: native-full-sync
+    repo_metadata:
+      representation: metadata
+      full_sync_allowed: true
+      labels:
+        - repo:intelligence-stack
+      custom_fields:
+        github_repository: Whitepaper-Reading-Club/intelligence-stack
+    policy_overrides:
+      community_safe_summary_required: true

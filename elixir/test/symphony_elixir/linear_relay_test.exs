@@ -6,7 +6,7 @@ defmodule SymphonyElixir.LinearRelayTest do
   test "normalizes Linear teams, projects, issues, comments, labels, relations, statuses, and attachments" do
     payload = %{
       "team" => %{"id" => "team-1", "key" => "HML", "name" => "Homelab"},
-      "project" => %{"id" => "project-1", "name" => "Homelab runtime", "slugId" => "homelab-runtime"},
+      "project" => %{"id" => "project-1", "name" => "Homelab", "slugId" => "homelab-02e0c66d1cb8"},
       "issue" => %{
         "id" => "issue-1",
         "identifier" => "HML-12",
@@ -15,7 +15,7 @@ defmodule SymphonyElixir.LinearRelayTest do
         "url" => "https://linear.app/brian/issue/HML-12",
         "state" => %{"id" => "state-1", "name" => "In Progress"},
         "team" => %{"id" => "team-1", "key" => "HML", "name" => "Homelab"},
-        "project" => %{"id" => "project-1", "name" => "Homelab runtime", "slugId" => "homelab-runtime"},
+        "project" => %{"id" => "project-1", "name" => "Homelab", "slugId" => "homelab-02e0c66d1cb8"},
         "labels" => %{"nodes" => [%{"id" => "label-1", "name" => "symphony"}]},
         "comments" => %{"nodes" => [%{"id" => "comment-1", "body" => "Checkpoint?", "url" => "https://linear.comment"}]},
         "relations" => %{
@@ -34,7 +34,7 @@ defmodule SymphonyElixir.LinearRelayTest do
     context = Relay.normalize_read_models(payload)
 
     assert context.team.key == "HML"
-    assert context.project.slug == "homelab-runtime"
+    assert context.project.slug == "homelab-02e0c66d1cb8"
     assert context.issue.identifier == "HML-12"
     assert context.issue.status.name == "In Progress"
     assert context.issue.labels == [%{id: "label-1", name: "symphony"}]

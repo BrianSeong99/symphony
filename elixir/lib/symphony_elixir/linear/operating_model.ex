@@ -1,9 +1,9 @@
 defmodule SymphonyElixir.Linear.OperatingModel do
   @moduledoc """
-  Parser and validator for the Linear operating-domain and outcome-project model.
+  Parser and validator for the Linear operating-domain and Homelab project model.
   """
 
-  @required_domain_keys ["homelab-personal", "miden", "chainless", "wprc", "symphony"]
+  @required_domain_keys ["labs", "miden", "chainless", "wprc", "personal"]
   @sync_profiles ["native-full-sync", "relay-full-sync", "relay-pr-only", "relay-context-only", "no-github"]
 
   @type model :: map()
@@ -113,10 +113,10 @@ defmodule SymphonyElixir.Linear.OperatingModel do
   end
 
   defp validate_project_policy(errors, model) do
-    if default_project_unit(model) == "outcome" do
+    if default_project_unit(model) == "homelab_project" do
       errors
     else
-      ["project_policy.default_project_unit must be outcome" | errors]
+      ["project_policy.default_project_unit must be homelab_project" | errors]
     end
   end
 
@@ -148,14 +148,18 @@ defmodule SymphonyElixir.Linear.OperatingModel do
         ["operating_domains.#{domain_key}.allowed_sync_profiles includes unsupported profiles" | errors]
       end
 
-    if domain_key == "homelab-personal" and native_allowed?(domain) do
-      errors
-    else
-      if domain_key == "homelab-personal" do
-        ["operating_domains.homelab-personal.github_issue_sync.native_allowed must be true" | errors]
-      else
+    cond do
+      domain_key in ["labs", "personal"] and native_allowed?(domain) ->
         errors
-      end
+
+      domain_key in ["labs", "personal"] ->
+        ["operating_domains.#{domain_key}.github_issue_sync.native_allowed must be true" | errors]
+
+      domain_key in ["miden", "chainless"] and native_allowed?(domain) ->
+        ["operating_domains.#{domain_key}.github_issue_sync.native_allowed must be false" | errors]
+
+      true ->
+        errors
     end
   end
 
@@ -174,12 +178,28 @@ defmodule SymphonyElixir.Linear.OperatingModel do
     operating_domain = Map.get(project, "operating_domain")
 
     if Map.has_key?(Map.get(model, "operating_domains", %{}), operating_domain) do
-      errors
+      validate_project_homelab_workspace(errors, project_key, project, operating_domain)
     else
       [
         "outcome_projects.#{project_key}.operating_domain references unknown domain #{operating_domain}"
         | errors
       ]
+    end
+  end
+
+  defp validate_project_homelab_workspace(errors, project_key, project, operating_domain) do
+    case Map.get(project, "homelab_workspace_id") do
+      nil ->
+        ["outcome_projects.#{project_key}.homelab_workspace_id is required" | errors]
+
+      ^operating_domain ->
+        errors
+
+      homelab_workspace_id ->
+        [
+          "outcome_projects.#{project_key}.homelab_workspace_id #{homelab_workspace_id} does not match operating_domain #{operating_domain}"
+          | errors
+        ]
     end
   end
 

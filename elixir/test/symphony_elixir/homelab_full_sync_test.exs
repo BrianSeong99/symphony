@@ -6,9 +6,10 @@ defmodule SymphonyElixir.HomelabFullSyncTest do
   test "loads Homelab as the owned native full-sync project" do
     config = FullSync.config!()
 
-    assert config.project_key == "homelab-runtime"
-    assert config.linear_team_key == "HOM"
-    assert config.linear_project_key == "HOM-RUNTIME"
+    assert config.project_key == "homelab"
+    assert config.linear_team_key == "LAB"
+    assert config.linear_project_key == "homelab-02e0c66d1cb8"
+    assert config.linear_project_url == "https://linear.app/brianseong/project/homelab-02e0c66d1cb8"
     assert config.sync_profile == "native-full-sync"
     assert config.github_repository == "BrianSeong99/homelab"
     assert config.full_sync_allowed
