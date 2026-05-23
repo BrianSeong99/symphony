@@ -1,0 +1,10 @@
+.git
+.github
+**/_build
+**/deps
+**/.elixir_ls
+**/cover
+**/*.ez
+worktrees
+tmp
+data

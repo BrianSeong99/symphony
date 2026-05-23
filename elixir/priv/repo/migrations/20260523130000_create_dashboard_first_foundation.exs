@@ -137,7 +137,7 @@ defmodule SymphonyElixir.Repo.Migrations.CreateDashboardFirstFoundation do
     end
 
     create(index(:workpads, [:symphony_issue_id]))
-    create(unique_index(:workpads, [:symphony_issue_id], where: "active"))
+    create(unique_index(:workpads, [:symphony_issue_id], name: :workpads_active_symphony_issue_id_index, where: "active"))
 
     create table(:validation_requirements) do
       add(:symphony_issue_id, references(:symphony_issues, on_delete: :delete_all), null: false)
