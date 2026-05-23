@@ -1,0 +1,166 @@
+version: 1
+patterns:
+  - key: explore-plan-code
+    summary: "Require investigation and explicit planning before implementation."
+    origin_sources:
+      - claude-best-practices
+      - codex-agent-loop
+      - cursor-agent-best-practices
+    enforces:
+      - "collect repo context before planning"
+      - "write acceptance criteria and validation before builder dispatch"
+      - "block implementation when validation is missing"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
+  - key: planner-worker-reviewer-separation
+    summary: "Keep planning, implementation, review, integration, and learning responsibilities separate."
+    origin_sources:
+      - cursor-self-driving-codebases
+      - codex-openai-usage
+      - cursor-agent-best-practices
+    enforces:
+      - "planner owns issue interpretation and validation plan"
+      - "builder owns implementation"
+      - "reviewer owns critique"
+      - "learning engine proposes rules but does not approve them"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
+  - key: persistent-builder-session
+    summary: "Keep one resumable builder session per Symphony issue until terminal state."
+    origin_sources:
+      - claude-sessions
+      - claude-memory
+      - cursor-background-agents
+      - cursor-memories
+    enforces:
+      - "resume builder context across retries"
+      - "destroy builder context after done, cancelled, merged, or terminal state"
+      - "refresh context before continuing after external changes"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
+  - key: persistent-reviewer-session
+    summary: "Keep one review context per PR so repeated review passes preserve findings and tradeoffs."
+    origin_sources:
+      - codex-github-review
+      - codex-app-server
+      - claude-memory
+      - cursor-memories
+    enforces:
+      - "track open, resolved, accepted, and false-positive findings"
+      - "resume reviewer context after new commits"
+      - "destroy reviewer context after PR merge or close"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
+  - key: review-repair-validate
+    summary: "Convert review feedback and failing checks into repair work, then revalidate before handoff."
+    origin_sources:
+      - codex-agent-loop
+      - codex-github-review
+      - github-copilot-coding-agent
+    enforces:
+      - "ingest PR comments, inline comments, reviews, and checks"
+      - "keep actionable findings open until fixed or explicitly accepted"
+      - "run validation after feedback-driven changes"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
+  - key: deterministic-hooks-over-soft-instructions
+    summary: "Use validators, hooks, and capability checks for critical policy instead of relying on prompts alone."
+    origin_sources:
+      - claude-hooks
+      - codex-app-server
+    enforces:
+      - "capability probes gate GitHub mutation"
+      - "readiness validators gate builder dispatch"
+      - "hard policy lives in deterministic checks"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
+  - key: context-freshness-check
+    summary: "Refresh repo, issue, PR, and config context before resuming long-running work."
+    origin_sources:
+      - claude-best-practices
+      - cursor-secure-indexing
+      - codex-app-server
+    enforces:
+      - "check current branch and base before implementation"
+      - "refresh PR comments/checks before review handoff"
+      - "reload central policy before dispatch"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
+  - key: loop-breaker
+    summary: "Stop repeated failed attempts and require a spec or environment decision."
+    origin_sources:
+      - codex-agent-loop
+      - cursor-self-driving-codebases
+    enforces:
+      - "same failure signature twice triggers a stop"
+      - "three failed validation attempts trigger a stop"
+      - "validation/spec contradictions move the issue to a human checkpoint"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: true
+
+  - key: final-green-pass
+    summary: "Require final validation evidence before human handoff or merge."
+    origin_sources:
+      - claude-best-practices
+      - codex-safety
+      - github-copilot-coding-agent
+    enforces:
+      - "all required validation items are complete"
+      - "PR checks are green or explicitly waived by a human checkpoint"
+      - "dashboard evidence is current before handoff"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
+  - key: human-gated-rule-promotion
+    summary: "Allow learning to propose rules, but keep sensitive policy changes human-owned."
+    origin_sources:
+      - codex-safety
+      - cursor-self-driving-codebases
+    enforces:
+      - "learning cannot change merge authority"
+      - "learning cannot weaken public repo mutation policy"
+      - "learning cannot weaken security, contract, TEE, payment, or production data gates"
+    safety_policy:
+      can_auto_apply: false
+      can_weaken_hard_gates: false
+      human_approval_required: true
+
+  - key: simulation-before-production
+    summary: "Prove orchestration behavior in simulation before enabling unattended real-project execution."
+    origin_sources:
+      - codex-safety
+      - cursor-background-agents
+      - github-copilot-coding-agent
+    enforces:
+      - "run full-sync, PR-only, context-only, and no-GitHub scenarios"
+      - "prove loop breaker and public repo mutation guards"
+      - "block unattended operation until simulation passes"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: true

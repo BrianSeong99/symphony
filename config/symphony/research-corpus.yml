@@ -1,0 +1,162 @@
+version: 1
+last_reviewed_on: "2026-05-23"
+sources:
+  - id: claude-best-practices
+    title: "Claude Code best practices"
+    url: "https://code.claude.com/docs/en/best-practices"
+    vendor: "anthropic"
+    topic: "planning-verification"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.9
+    applicable_patterns:
+      - explore-plan-code
+      - final-green-pass
+      - context-freshness-check
+  - id: claude-memory
+    title: "Claude Code memory"
+    url: "https://code.claude.com/docs/en/memory"
+    vendor: "anthropic"
+    topic: "context-continuity"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.85
+    applicable_patterns:
+      - persistent-builder-session
+      - persistent-reviewer-session
+      - context-freshness-check
+  - id: claude-hooks
+    title: "Claude Code hooks"
+    url: "https://code.claude.com/docs/en/hooks"
+    vendor: "anthropic"
+    topic: "deterministic-controls"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.85
+    applicable_patterns:
+      - deterministic-hooks-over-soft-instructions
+      - final-green-pass
+  - id: claude-sessions
+    title: "Claude Code sessions"
+    url: "https://code.claude.com/docs/en/agent-sdk/sessions"
+    vendor: "anthropic"
+    topic: "resumable-sessions"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.85
+    applicable_patterns:
+      - persistent-builder-session
+      - context-freshness-check
+  - id: codex-agent-loop
+    title: "Unrolling the Codex agent loop"
+    url: "https://openai.com/index/unrolling-the-codex-agent-loop/"
+    vendor: "openai"
+    topic: "agent-loop"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.9
+    applicable_patterns:
+      - explore-plan-code
+      - review-repair-validate
+      - loop-breaker
+  - id: codex-app-server
+    title: "Unlocking the Codex harness"
+    url: "https://openai.com/index/unlocking-the-codex-harness/"
+    vendor: "openai"
+    topic: "harness-design"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.9
+    applicable_patterns:
+      - persistent-reviewer-session
+      - deterministic-hooks-over-soft-instructions
+      - context-freshness-check
+  - id: codex-safety
+    title: "Running Codex safely"
+    url: "https://openai.com/index/running-codex-safely/"
+    vendor: "openai"
+    topic: "safety-policy"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.9
+    applicable_patterns:
+      - human-gated-rule-promotion
+      - simulation-before-production
+      - final-green-pass
+  - id: codex-github-review
+    title: "Codex GitHub review"
+    url: "https://developers.openai.com/codex/integrations/github"
+    vendor: "openai"
+    topic: "review-queue"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.85
+    applicable_patterns:
+      - persistent-reviewer-session
+      - review-repair-validate
+  - id: codex-openai-usage
+    title: "How OpenAI uses Codex"
+    url: "https://openai.com/business/guides-and-resources/how-openai-uses-codex/"
+    vendor: "openai"
+    topic: "organizational-workflow"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.8
+    applicable_patterns:
+      - planner-worker-reviewer-separation
+      - review-repair-validate
+      - final-green-pass
+  - id: cursor-agent-best-practices
+    title: "Cursor agent best practices"
+    url: "https://cursor.com/blog/agent-best-practices"
+    vendor: "cursor"
+    topic: "agent-practices"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.85
+    applicable_patterns:
+      - explore-plan-code
+      - planner-worker-reviewer-separation
+      - context-freshness-check
+  - id: cursor-background-agents
+    title: "Cursor background agents"
+    url: "https://docs.cursor.com/background-agents"
+    vendor: "cursor"
+    topic: "background-agents"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.85
+    applicable_patterns:
+      - persistent-builder-session
+      - simulation-before-production
+  - id: cursor-self-driving-codebases
+    title: "Self-driving codebases"
+    url: "https://cursor.com/blog/self-driving-codebases"
+    vendor: "cursor"
+    topic: "role-separation"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.8
+    applicable_patterns:
+      - planner-worker-reviewer-separation
+      - human-gated-rule-promotion
+      - loop-breaker
+  - id: cursor-secure-indexing
+    title: "Secure codebase indexing"
+    url: "https://cursor.com/blog/secure-codebase-indexing"
+    vendor: "cursor"
+    topic: "context-indexing"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.75
+    applicable_patterns:
+      - context-freshness-check
+  - id: cursor-memories
+    title: "Cursor memories"
+    url: "https://docs.cursor.com/en/context/memories"
+    vendor: "cursor"
+    topic: "memory"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.8
+    applicable_patterns:
+      - persistent-builder-session
+      - persistent-reviewer-session
+      - context-freshness-check
+  - id: github-copilot-coding-agent
+    title: "GitHub Copilot coding agent"
+    url: "https://docs.github.com/en/copilot/concepts/agents/cloud-agent/about-cloud-agent"
+    vendor: "github"
+    topic: "github-native-agents"
+    last_reviewed_on: "2026-05-23"
+    confidence: 0.8
+    applicable_patterns:
+      - review-repair-validate
+      - final-green-pass
+      - simulation-before-production
