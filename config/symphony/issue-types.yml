@@ -1,0 +1,147 @@
+version: 1
+default_required_sections: &required_sections
+  - Problem
+  - Scope
+  - Non-Goals
+  - Acceptance Criteria
+  - Validation / Test Plan
+  - Risk Level
+  - Human Checkpoints
+  - Rollback / Recovery
+  - Links / Context
+
+issue_types:
+  - key: feature
+    summary: "User-facing or API-facing capability work."
+    required_sections: *required_sections
+    readiness_gates:
+      - behavior-specified
+      - validation-specified
+      - risk-classified
+    validation_requirements:
+      - targeted-tests
+      - acceptance-criteria-evidence
+
+  - key: bug
+    summary: "Fix for incorrect or broken behavior."
+    required_sections: *required_sections
+    readiness_gates:
+      - reproduction-evidence
+      - expected-behavior-specified
+      - validation-specified
+    validation_requirements:
+      - reproduction-before-fix
+      - regression-test-or-targeted-proof
+
+  - key: docs
+    summary: "Documentation, tutorial, guide, or public content update."
+    required_sections: *required_sections
+    readiness_gates:
+      - affected-pages-listed
+      - audience-specified
+      - validation-specified
+    validation_requirements:
+      - docs-render-or-build
+      - link-check-when-applicable
+
+  - key: frontend-ui
+    summary: "Frontend behavior, interaction, or visual UI work."
+    required_sections: *required_sections
+    readiness_gates:
+      - user-path-specified
+      - responsive-scope-specified
+      - validation-specified
+    validation_requirements:
+      - browser-walkthrough
+      - screenshot-or-visual-evidence
+      - responsive-check
+
+  - key: backend-api
+    summary: "Backend service, API, data flow, or integration work."
+    required_sections: *required_sections
+    readiness_gates:
+      - contract-impact-check
+      - data-impact-check
+      - validation-specified
+    validation_requirements:
+      - targeted-unit-or-integration-tests
+      - contract-or-schema-validation
+
+  - key: contract-security
+    summary: "Contract, security-sensitive, TEE, payment, or custody-adjacent work."
+    required_sections: *required_sections
+    readiness_gates:
+      - human-approval-before-build
+      - threat-or-risk-notes
+      - validation-specified
+    validation_requirements:
+      - security-review-checkpoint
+      - full-relevant-test-suite
+      - human-approval-before-merge
+
+  - key: infra-homelab
+    summary: "Docker, homelab, deployment, health, or service runtime work."
+    required_sections: *required_sections
+    readiness_gates:
+      - docker-runtime-scope
+      - health-endpoint-specified
+      - validation-specified
+    validation_requirements:
+      - docker-health-route-validation
+      - compose-config-validation
+      - restart-persistence-check
+
+  - key: test-validation
+    summary: "Test coverage, validation harness, CI, or simulation quality work."
+    required_sections: *required_sections
+    readiness_gates:
+      - target-behavior-specified
+      - failure-mode-specified
+      - validation-specified
+    validation_requirements:
+      - failing-test-first
+      - full-affected-suite
+
+  - key: refactor
+    summary: "Internal structure change with no intended behavior change."
+    required_sections: *required_sections
+    readiness_gates:
+      - behavior-preservation-specified
+      - blast-radius-specified
+      - validation-specified
+    validation_requirements:
+      - before-after-equivalence
+      - affected-suite
+
+  - key: research-spike
+    summary: "Investigation that should produce a decision or implementation plan."
+    required_sections: *required_sections
+    readiness_gates:
+      - decision-output-required
+      - implementation-out-of-scope-unless-approved
+      - validation-specified
+    validation_requirements:
+      - evidence-summary
+      - recommendation-and-tradeoffs
+
+  - key: release-integration
+    summary: "Release, launch, milestone, or integration readiness work."
+    required_sections: *required_sections
+    readiness_gates:
+      - milestone-linked
+      - rollback-plan-required
+      - validation-specified
+    validation_requirements:
+      - full-release-relevant-validation
+      - final-human-checkpoint
+
+  - key: follow-up-tech-debt
+    summary: "Follow-up issue created from discovered out-of-scope work."
+    required_sections: *required_sections
+    readiness_gates:
+      - source-issue-linked
+      - scope-contained
+      - validation-specified
+    validation_requirements:
+      - targeted-validation
+      - no-scope-expansion
