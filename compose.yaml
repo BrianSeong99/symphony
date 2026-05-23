@@ -1,0 +1,54 @@
+name: symphony
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: symphony
+      POSTGRES_PASSWORD: symphony
+      POSTGRES_DB: symphony_prod
+    volumes:
+      - symphony-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U symphony -d symphony_prod"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brian-symphony:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MIX_ENV: prod
+      SYMPHONY_DB_HOST: db
+      SYMPHONY_DB_PORT: "5432"
+      SYMPHONY_DB_USER: symphony
+      SYMPHONY_DB_PASSWORD: symphony
+      SYMPHONY_DB_NAME: symphony_prod
+      SYMPHONY_SERVER_HOST: 0.0.0.0
+      SYMPHONY_SERVER_PORT: "4000"
+      SYMPHONY_MIGRATE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4000/healthz >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    networks:
+      - default
+      - homelab
+
+volumes:
+  symphony-db:
+
+networks:
+  homelab:
+    external: true
+    name: homelab

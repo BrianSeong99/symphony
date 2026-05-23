@@ -85,10 +85,16 @@ defmodule SymphonyElixir.Config do
 
   @spec server_port() :: non_neg_integer() | nil
   def server_port do
-    case Application.get_env(:symphony_elixir, :server_port_override) do
+    case System.get_env("SYMPHONY_SERVER_PORT") || Application.get_env(:symphony_elixir, :server_port_override) do
       port when is_integer(port) and port >= 0 -> port
+      port when is_binary(port) -> parse_port(port)
       _ -> settings!().server.port
     end
+  end
+
+  @spec server_host() :: String.t()
+  def server_host do
+    System.get_env("SYMPHONY_SERVER_HOST") || settings!().server.host
   end
 
   @spec validate!() :: :ok | {:error, term()}
@@ -149,6 +155,13 @@ defmodule SymphonyElixir.Config do
 
       other ->
         "Invalid WORKFLOW.md config: #{inspect(other)}"
+    end
+  end
+
+  defp parse_port(port) do
+    case Integer.parse(port) do
+      {value, ""} when value >= 0 -> value
+      _other -> settings!().server.port
     end
   end
 end

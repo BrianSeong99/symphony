@@ -1,0 +1,9 @@
+name: symphony
+kind: prod
+upstream: symphony-web-1:4000
+upstream_kind: docker
+health_path: /healthz
+description: Private Symphony runtime console and automation kernel
+icon: si-elixir
+group: Production
+repo: /Users/brianseong/Develop/Labs/symphony

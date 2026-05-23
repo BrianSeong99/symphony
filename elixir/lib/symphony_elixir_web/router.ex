@@ -28,6 +28,8 @@ defmodule SymphonyElixirWeb.Router do
   end
 
   scope "/", SymphonyElixirWeb do
+    get("/health", HealthController, :health)
+    get("/healthz", HealthController, :health)
     get("/api/v1/state", ObservabilityApiController, :state)
     get("/api/v1/runtime/health", RuntimeApiController, :health)
     get("/api/v1/runtime/relay/events", RuntimeApiController, :relay_events)
@@ -36,6 +38,8 @@ defmodule SymphonyElixirWeb.Router do
     post("/api/v1/linear/webhooks", RuntimeApiController, :linear_webhook)
 
     match(:*, "/", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/health", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/healthz", ObservabilityApiController, :method_not_allowed)
     match(:*, "/api/v1/state", ObservabilityApiController, :method_not_allowed)
     match(:*, "/api/v1/runtime/health", ObservabilityApiController, :method_not_allowed)
     match(:*, "/api/v1/runtime/relay/events", ObservabilityApiController, :method_not_allowed)
