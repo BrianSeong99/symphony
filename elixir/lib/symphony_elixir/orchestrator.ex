@@ -451,6 +451,8 @@ defmodule SymphonyElixir.Orchestrator do
       terminal_issue_state?(issue.state, terminal_states) ->
         Logger.info("Issue moved to terminal state: #{issue_context(issue)} state=#{issue.state}; stopping active agent")
 
+        state = maybe_log_terminal_running_issue(state, issue)
+
         terminate_running_issue(state, issue.id, true)
 
       !issue_routable_to_worker?(issue) ->
@@ -580,6 +582,63 @@ defmodule SymphonyElixir.Orchestrator do
         state
     end
   end
+
+  defp maybe_log_terminal_running_issue(%State{} = state, %Issue{id: issue_id} = issue) do
+    case Map.get(state.running, issue_id) do
+      nil ->
+        state
+
+      running_entry ->
+        event = terminal_run_log_event(issue.state)
+
+        attrs = %{
+          role: :runner,
+          stage: "issue.terminal",
+          terminal_state: issue.state,
+          session_id: running_entry_session_id(running_entry),
+          worktree: Map.get(running_entry, :workspace_path),
+          branch: workspace_branch(Map.get(running_entry, :workspace_path)),
+          cleanup_workspace: true,
+          retry_attempt: Map.get(running_entry, :retry_attempt),
+          equivalent_attempt: Map.get(running_entry, :equivalent_attempt),
+          turn_count: Map.get(running_entry, :turn_count),
+          runtime_seconds: running_seconds(Map.get(running_entry, :started_at), DateTime.utc_now()),
+          total_tokens: Map.get(running_entry, :codex_total_tokens),
+          uncached_tokens: Map.get(running_entry, :codex_uncached_total_tokens),
+          last_event: Map.get(running_entry, :last_codex_event),
+          last_event_at: Map.get(running_entry, :last_codex_timestamp)
+        }
+
+        case RunLog.log(issue, event, attrs) do
+          :ok ->
+            state
+
+          {:error, reason} ->
+            Logger.warning("Failed to write terminal run log #{issue_context(issue)} event=#{event}: #{inspect(reason)}")
+            state
+        end
+    end
+  end
+
+  defp terminal_run_log_event(state) when is_binary(state) do
+    case String.downcase(String.trim(state)) do
+      "done" -> :"merge.done"
+      _state -> :"build.progress"
+    end
+  end
+
+  defp terminal_run_log_event(_state), do: :"build.progress"
+
+  defp workspace_branch(workspace) when is_binary(workspace) do
+    if File.dir?(workspace) do
+      case System.cmd("git", ["-C", workspace, "branch", "--show-current"], stderr_to_stdout: true) do
+        {branch, 0} -> String.trim(branch)
+        {_output, _status} -> nil
+      end
+    end
+  end
+
+  defp workspace_branch(_workspace), do: nil
 
   defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace) do
     case Map.get(state.running, issue_id) do

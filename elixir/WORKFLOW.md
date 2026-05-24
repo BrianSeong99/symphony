@@ -22,6 +22,14 @@ workspace:
   branch_prefix: brian/symphony
 hooks:
   after_create: |
+    run_mix() {
+      if command -v mise >/dev/null 2>&1; then
+        mise trust
+        mise exec -- mix "$@"
+      else
+        mix "$@"
+      fi
+    }
     if git remote get-url origin >/dev/null 2>&1; then
       git remote set-url origin https://github.com/BrianSeong99/symphony.git
     else
@@ -33,15 +41,19 @@ hooks:
       git remote add upstream https://github.com/openai/symphony.git
     fi
     git fetch origin main
-    if command -v mise >/dev/null 2>&1; then
-      cd elixir && mise trust && mise exec -- mix deps.get
-    fi
+    cd elixir
+    run_mix deps.get
   before_run: |
     git_dir="$(git rev-parse --git-dir)"
     common_dir="$(git rev-parse --git-common-dir)"
     test "$git_dir" != "$common_dir"
   before_remove: |
-    cd elixir && mise exec -- mix workspace.before_remove
+    cd elixir
+    if command -v mise >/dev/null 2>&1; then
+      mise exec -- mix workspace.before_remove
+    else
+      mix workspace.before_remove
+    fi
 agent:
   max_concurrent_agents: 10
   max_turns: 20
@@ -50,7 +62,7 @@ agent:
   no_progress_max_tokens: 220000
   prompt_mode: compact
 codex:
-  command: SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
+  command: SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
@@ -112,6 +124,7 @@ Continuation context:
   {% endif %}
 
 Issue context:
+Internal id: {{ issue.id }}
 Identifier: {{ issue.identifier }}
 Title: {{ issue.title }}
 Current status: {{ issue.state }}
@@ -152,6 +165,16 @@ below. Symphony's backend writes run-log events such as `build.started`,
 `linear_graphql` only when a required field is missing from the injected
 context, when updating changed requirements before continuing, or when linking
 final PR/merge evidence cannot be handled by GitHub/linkbacks.
+When `linear_graphql` is truly required, query by the injected internal issue
+id with `issue(id: "...")`; Linear's issue filter does not support an
+`identifier` field.
+
+For Symphony Elixir validation, run commands from `elixir/`. Fresh worktrees
+must run `mix deps.get` before tests when dependencies are missing, and test
+commands should inherit `SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0`
+so validation cannot collide with the live native runner endpoint.
+For PR state checks, use:
+`gh pr view <number> --json number,title,state,mergeStateStatus,mergeable,headRefName,baseRefName,statusCheckRollup,url`.
 
 For small implementation tasks, first inspect or edit repository files within
 45 seconds of session start. Do not spend the opening turn creating or

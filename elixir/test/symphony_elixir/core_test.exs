@@ -113,8 +113,9 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(workspace, "branch_prefix") == "brian/symphony"
     assert Map.get(hooks, "after_create") =~ "git remote set-url origin https://github.com/BrianSeong99/symphony.git"
     assert Map.get(hooks, "after_create") =~ "git remote set-url upstream https://github.com/openai/symphony.git"
-    assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
-    assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
+    assert Map.get(hooks, "after_create") =~ "run_mix()"
+    assert Map.get(hooks, "after_create") =~ "run_mix deps.get"
+    assert Map.get(hooks, "after_create") =~ "mix \"$@\""
     assert Map.get(hooks, "before_run") =~ "git rev-parse --git-dir"
     assert Map.get(agent, "no_progress_timeout_ms") == 90_000
     assert Map.get(agent, "no_progress_max_tokens") == 220_000
@@ -123,12 +124,17 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(codex, "command") =~ "SYMPHONY_GIT_BASE_REF=brian/main"
     assert Map.get(codex, "command") =~ "SYMPHONY_GIT_PUSH_REMOTE=origin"
     assert Map.get(codex, "command") =~ "SYMPHONY_GITHUB_REPO=BrianSeong99/symphony"
+    assert Map.get(codex, "command") =~ "SYMPHONY_RUNNER_ENABLED=false"
+    assert Map.get(codex, "command") =~ "SYMPHONY_SERVER_PORT=0"
     assert Map.get(codex, "thread_sandbox") == "danger-full-access"
     assert get_in(codex, ["turn_sandbox_policy", "type"]) == "dangerFullAccess"
-    assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
+    assert Map.get(hooks, "before_remove") =~ "mix workspace.before_remove"
 
     assert String.trim(prompt) != ""
     assert prompt =~ "If the issue names exact files"
+    assert prompt =~ "Internal id:"
+    assert prompt =~ "SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0"
+    assert prompt =~ "issue(id:"
     assert is_binary(Config.workflow_prompt())
     assert Config.workflow_prompt() == prompt
   end
@@ -1286,6 +1292,7 @@ defmodule SymphonyElixir.CoreTest do
     prompt = PromptBuilder.build_prompt(issue)
 
     assert prompt =~ "You are running a Symphony-managed repository task."
+    assert prompt =~ "Internal id:"
     assert prompt =~ "Identifier: LAB-FAST"
     assert prompt =~ "Do not use `linear_graphql` during startup"
     assert prompt =~ "Do not use GitHub connectors"
@@ -1293,6 +1300,8 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "inspect or edit repository files within 45 seconds"
     assert prompt =~ "If the issue names exact files"
     assert prompt =~ "Publish with `${SYMPHONY_GIT_PUSH_REMOTE:-origin}`"
+    assert prompt =~ "SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0"
+    assert prompt =~ "query by the injected internal issue id"
     assert prompt =~ "first action after reading this prompt should be a repository command"
     refute prompt =~ "## Step 0"
     refute prompt =~ "Codex Workpad"
@@ -1352,6 +1361,7 @@ defmodule SymphonyElixir.CoreTest do
     Workflow.set_workflow_file_path(Path.expand("WORKFLOW.md", File.cwd!()))
 
     issue = %Issue{
+      id: "issue-workflow-render",
       identifier: "MT-616",
       title: "Use rich templates for WORKFLOW.md",
       description: "Render with rich template variables",
@@ -1366,6 +1376,7 @@ defmodule SymphonyElixir.CoreTest do
 
     assert prompt =~ "You are working on a Linear ticket `MT-616`"
     assert prompt =~ "Issue context:"
+    assert prompt =~ "Internal id: issue-workflow-render"
     assert prompt =~ "Identifier: MT-616"
     assert prompt =~ "Title: Use rich templates for WORKFLOW.md"
     assert prompt =~ "Current status: In Progress"

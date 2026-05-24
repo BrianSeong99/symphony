@@ -1598,6 +1598,71 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
            } = state.blocked[issue_id]
   end
 
+  test "terminal running issues write final evidence before workspace cleanup" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-terminal-evidence-#{System.unique_integer([:positive])}")
+    workspace_root = Path.join(test_root, "workspaces")
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      tracker_api_token: nil,
+      tracker_project_slug: nil,
+      workspace_root: workspace_root
+    )
+
+    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+    on_exit(fn -> File.rm_rf(test_root) end)
+
+    issue_id = "issue-terminal-evidence"
+    workspace = Path.join(workspace_root, "LAB-DONE")
+    File.mkdir_p!(workspace)
+    System.cmd("git", ["init"], cd: workspace, stderr_to_stdout: true)
+    System.cmd("git", ["checkout", "-b", "brian/symphony/LAB-DONE"], cd: workspace, stderr_to_stdout: true)
+
+    worker = spawn(fn -> Process.sleep(:infinity) end)
+    ref = Process.monitor(worker)
+    started_at = DateTime.add(DateTime.utc_now(), -95, :second)
+
+    running_issue = %Issue{id: issue_id, identifier: "LAB-DONE", state: "In Progress"}
+    done_issue = %Issue{id: issue_id, identifier: "LAB-DONE", state: "Done"}
+
+    running_entry = %{
+      pid: worker,
+      ref: ref,
+      identifier: "LAB-DONE",
+      issue: running_issue,
+      workspace_path: workspace,
+      session_id: "thread-terminal-evidence",
+      turn_count: 2,
+      retry_attempt: 0,
+      equivalent_attempt: 0,
+      codex_total_tokens: 1_200,
+      codex_uncached_total_tokens: 140,
+      last_codex_event: :turn_completed,
+      last_codex_timestamp: DateTime.utc_now(),
+      started_at: started_at
+    }
+
+    state = %Orchestrator.State{
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      running: %{issue_id => running_entry},
+      claimed: MapSet.new([issue_id])
+    }
+
+    next_state = Orchestrator.reconcile_issue_states_for_test([done_issue], state)
+
+    refute Map.has_key?(next_state.running, issue_id)
+    refute MapSet.member?(next_state.claimed, issue_id)
+
+    assert_receive {:memory_tracker_run_log_upsert, ^issue_id, body}, 1_000
+    assert body =~ "### Symphony run log: merge.done"
+    assert body =~ "LAB-DONE"
+    assert body =~ "issue.terminal"
+    assert body =~ "brian/symphony/LAB-DONE"
+    assert body =~ "thread-terminal-evidence"
+
+    refute File.exists?(workspace)
+  end
+
   test "status dashboard renders offline marker to terminal" do
     rendered =
       ExUnit.CaptureIO.capture_io(fn ->
