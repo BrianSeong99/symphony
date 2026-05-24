@@ -113,6 +113,7 @@ defmodule SymphonyElixir.TestSupport do
           max_retry_backoff_ms: 300_000,
           no_progress_timeout_ms: 300_000,
           no_progress_max_tokens: 300_000,
+          prompt_mode: "workflow",
           max_concurrent_agents_by_state: %{},
           codex_command: "codex app-server",
           codex_approval_policy: %{reject: %{sandbox_approval: true, rules: true, mcp_elicitations: true}},
@@ -156,6 +157,7 @@ defmodule SymphonyElixir.TestSupport do
     max_retry_backoff_ms = Keyword.get(config, :max_retry_backoff_ms)
     no_progress_timeout_ms = Keyword.get(config, :no_progress_timeout_ms)
     no_progress_max_tokens = Keyword.get(config, :no_progress_max_tokens)
+    prompt_mode = Keyword.get(config, :prompt_mode)
     max_concurrent_agents_by_state = Keyword.get(config, :max_concurrent_agents_by_state)
     codex_command = Keyword.get(config, :codex_command)
     codex_approval_policy = Keyword.get(config, :codex_approval_policy)
@@ -202,6 +204,7 @@ defmodule SymphonyElixir.TestSupport do
         "  max_retry_backoff_ms: #{yaml_value(max_retry_backoff_ms)}",
         "  no_progress_timeout_ms: #{yaml_value(no_progress_timeout_ms)}",
         "  no_progress_max_tokens: #{yaml_value(no_progress_max_tokens)}",
+        "  prompt_mode: #{yaml_value(prompt_mode)}",
         "  max_concurrent_agents_by_state: #{yaml_value(max_concurrent_agents_by_state)}",
         "codex:",
         "  command: #{yaml_value(codex_command)}",

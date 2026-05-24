@@ -138,6 +138,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:max_concurrent_agents_by_state, :map, default: %{})
       field(:no_progress_timeout_ms, :integer, default: 300_000)
       field(:no_progress_max_tokens, :integer, default: 300_000)
+      field(:prompt_mode, :string, default: "workflow")
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -152,7 +153,8 @@ defmodule SymphonyElixir.Config.Schema do
           :max_retry_backoff_ms,
           :max_concurrent_agents_by_state,
           :no_progress_timeout_ms,
-          :no_progress_max_tokens
+          :no_progress_max_tokens,
+          :prompt_mode
         ],
         empty_values: []
       )
@@ -162,6 +164,7 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
       |> validate_number(:no_progress_timeout_ms, greater_than_or_equal_to: 0)
       |> validate_number(:no_progress_max_tokens, greater_than_or_equal_to: 0)
+      |> validate_inclusion(:prompt_mode, ["workflow", "compact"])
       |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
       |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
     end

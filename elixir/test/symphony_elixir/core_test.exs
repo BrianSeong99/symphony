@@ -116,6 +116,7 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(hooks, "before_run") =~ "git rev-parse --git-dir"
     assert Map.get(agent, "no_progress_timeout_ms") == 90_000
     assert Map.get(agent, "no_progress_max_tokens") == 100_000
+    assert Map.get(agent, "prompt_mode") == "compact"
     assert Map.get(codex, "command") =~ "--dangerously-bypass-approvals-and-sandbox"
     assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
 
@@ -1262,6 +1263,28 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.workflow_prompt() =~ "{{ issue.description }}"
   end
 
+  test "prompt builder can render compact runtime prompts for fast runner execution" do
+    write_workflow_file!(Workflow.workflow_file_path(), prompt_mode: "compact")
+
+    issue = %Issue{
+      identifier: "LAB-FAST",
+      title: "Add small fixture",
+      description: "Create one file and one test.",
+      state: "Todo",
+      url: "https://example.org/issues/LAB-FAST",
+      labels: ["smoke"]
+    }
+
+    prompt = PromptBuilder.build_prompt(issue)
+
+    assert prompt =~ "You are running a Symphony-managed repository task."
+    assert prompt =~ "Identifier: LAB-FAST"
+    assert prompt =~ "Do not use `linear_graphql` during startup"
+    assert prompt =~ "inspect or edit repository files within 45 seconds"
+    refute prompt =~ "## Step 0"
+    refute prompt =~ "Codex Workpad"
+  end
+
   test "prompt builder default template handles missing issue body" do
     write_workflow_file!(Workflow.workflow_file_path(), prompt: "")
 
@@ -1326,7 +1349,7 @@ defmodule SymphonyElixir.CoreTest do
 
     on_exit(fn -> Workflow.set_workflow_file_path(workflow_path) end)
 
-    prompt = PromptBuilder.build_prompt(issue, attempt: 2)
+    prompt = PromptBuilder.build_prompt(issue, attempt: 2, prompt_mode: :workflow)
 
     assert prompt =~ "You are working on a Linear ticket `MT-616`"
     assert prompt =~ "Issue context:"

@@ -9,6 +9,13 @@ defmodule SymphonyElixir.PromptBuilder do
 
   @spec build_prompt(SymphonyElixir.Linear.Issue.t(), keyword()) :: String.t()
   def build_prompt(issue, opts \\ []) do
+    case prompt_mode(opts) do
+      "compact" -> compact_prompt(issue, opts)
+      "workflow" -> workflow_prompt(issue, opts)
+    end
+  end
+
+  defp workflow_prompt(issue, opts) do
     template =
       Workflow.current()
       |> prompt_template!()
@@ -24,6 +31,62 @@ defmodule SymphonyElixir.PromptBuilder do
     )
     |> IO.iodata_to_binary()
   end
+
+  defp prompt_mode(opts) do
+    case Keyword.get(opts, :prompt_mode) do
+      :compact -> "compact"
+      :workflow -> "workflow"
+      mode when mode in ["compact", "workflow"] -> mode
+      _ -> configured_prompt_mode()
+    end
+  end
+
+  defp configured_prompt_mode do
+    Config.settings!().agent.prompt_mode
+  rescue
+    ArgumentError -> "workflow"
+  end
+
+  defp compact_prompt(issue, opts) do
+    attempt = Keyword.get(opts, :attempt)
+    labels = issue.labels || []
+    description = issue.description || "No description provided."
+
+    [
+      "You are running a Symphony-managed repository task.",
+      "",
+      "Issue:",
+      "- Identifier: #{issue.identifier}",
+      "- Title: #{issue.title}",
+      "- Current status: #{issue.state}",
+      "- URL: #{issue.url}",
+      "- Labels: #{Enum.join(labels, ", ")}",
+      compact_attempt(attempt),
+      "",
+      "Description:",
+      description,
+      "",
+      "Execution rules:",
+      "- Work only in the current repository worktree.",
+      "- Verify this is a real git worktree before edits: `git rev-parse --git-dir` and `git rev-parse --git-common-dir` must differ.",
+      "- Read nearest `AGENTS.md`, `CLAUDE.md`, `elixir/AGENTS.md`, and repo PR/validation guidance before public artifacts.",
+      "- Do not add AI attribution to commits, PRs, issues, comments, README files, or other public copy.",
+      "- Branches must be based on `main`; do not create stacked PRs.",
+      "- Symphony backend owns routine Linear run-log writeback. Do not use `linear_graphql` during startup unless required issue data is missing or requirements must be changed.",
+      "- For small tasks, inspect or edit repository files within 45 seconds. Do not spend the opening turn maintaining Linear workpads.",
+      "- Optional MCP tools such as Notion are not required and missing optional tools are not blockers.",
+      "- If requirements are wrong or validation is misaligned, record the required issue update through Linear, then continue in the same session.",
+      "",
+      "Deliverable:",
+      "- Implement the issue, run the stated validation, commit cleanly, push, open a PR, and self-merge when validation passes and repo policy allows it.",
+      "- Final response should contain completed actions and blockers only."
+    ]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join("\n")
+  end
+
+  defp compact_attempt(nil), do: nil
+  defp compact_attempt(attempt), do: "- Retry attempt: #{attempt}"
 
   defp prompt_template!({:ok, %{prompt_template: prompt}}), do: default_prompt(prompt)
 

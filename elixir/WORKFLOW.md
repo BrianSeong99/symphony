@@ -37,6 +37,7 @@ agent:
   max_retry_attempts: 3
   no_progress_timeout_ms: 90000
   no_progress_max_tokens: 100000
+  prompt_mode: compact
 codex:
   command: /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
