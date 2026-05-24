@@ -28,6 +28,7 @@ hooks:
 agent:
   max_concurrent_agents: 10
   max_turns: 20
+  max_retry_attempts: 3
 codex:
   command: codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
@@ -50,6 +51,8 @@ Hard defaults from Brian's global guidance:
 
 - Do not add AI attribution to commits, PRs, issues, comments, README files, or other public copy.
 - Branches must be cut from `origin/main`; do not create stacked PRs.
+- All implementation and review work must happen in a git worktree created from `main`.
+- LAB issues are assigned to Brian by default, require no human review by default, and may self-merge once validation and review gates pass.
 - If a repo still defaults to `master`, rename it to `main` before feature work.
 - Follow the repo PR template exactly and validate it when the repo provides a checker.
 - For Symphony Elixir, PR bodies must follow `../.github/pull_request_template.md` and can be checked with `mix pr_body.check --file /path/to/pr_body.md`.
@@ -105,9 +108,13 @@ Instructions:
 
 Work only in the provided repository copy. Do not touch any other path.
 
-## Prerequisite: Linear MCP or `linear_graphql` tool is available
+## Tool contract
 
-The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, stop and ask the user to configure Linear.
+Symphony owns Linear writeback through its backend. Builder/reviewer sessions
+should not assume optional MCP tools such as Notion are available, and missing
+optional MCP tools are not blockers. Use only the injected Symphony context,
+the repository checkout, GitHub where the project policy allows it, and the
+approved runner commands.
 
 ## Default posture
 
@@ -116,6 +123,9 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
 - Keep ticket metadata current (state, checklist, acceptance criteria, links).
+- Every planner, builder, reviewer, integrator, retry handler, blocker, and monitor update must be recorded in Linear before continuing.
+- If implementation reveals changed requirements, update the Linear issue/workpad first, then re-plan and continue in the same issue session.
+- Stop retry loops after three equivalent failed attempts; attempt four must block with classifier, evidence, and a concrete suggested action.
 - Treat a single persistent Linear comment as the source of truth for progress.
 - Use that single workpad comment for all progress and handoff notes; do not post separate "done"/summary comments.
 - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.

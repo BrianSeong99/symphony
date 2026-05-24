@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   """
 
   require Logger
-  alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, SSH}
+  alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, RunnerObserver, SSH}
 
   @initialize_id 1
   @thread_start_id 2
@@ -187,31 +187,37 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp start_port(workspace, nil) do
-    executable = System.find_executable("bash")
+    case RunnerObserver.preflight(Config.settings!().codex.command, shell: "bash") do
+      :ok ->
+        {:ok, open_local_port(workspace)}
 
-    if is_nil(executable) do
-      {:error, :bash_not_found}
-    else
-      port =
-        Port.open(
-          {:spawn_executable, String.to_charlist(executable)},
-          [
-            :binary,
-            :exit_status,
-            :stderr_to_stdout,
-            args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
-            cd: String.to_charlist(workspace),
-            line: @port_line_bytes
-          ]
-        )
+      {:error, %{classification: :missing_tool} = failure} ->
+        {:error, {:preflight_failed, failure}}
 
-      {:ok, port}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   defp start_port(workspace, worker_host) when is_binary(worker_host) do
     remote_command = remote_launch_command(workspace)
     SSH.start_port(worker_host, remote_command, line: @port_line_bytes)
+  end
+
+  defp open_local_port(workspace) do
+    executable = System.find_executable("bash")
+
+    Port.open(
+      {:spawn_executable, String.to_charlist(executable)},
+      [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
+        cd: String.to_charlist(workspace),
+        line: @port_line_bytes
+      ]
+    )
   end
 
   defp remote_launch_command(workspace) when is_binary(workspace) do

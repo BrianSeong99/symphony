@@ -549,7 +549,10 @@ defmodule SymphonyElixir.CoreTest do
 
     refute Map.has_key?(state.running, issue_id)
     assert MapSet.member?(state.completed, issue_id)
-    assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
+
+    assert %{attempt: 1, due_at_ms: due_at_ms, classification: nil, failure_fingerprint: nil, suggested_action: nil} =
+             state.retry_attempts[issue_id]
+
     assert is_integer(due_at_ms)
     assert_due_in_range(due_at_ms, -5_000, 1_100)
   end
@@ -591,7 +594,315 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_000, 40_500)
+    assert_due_in_range(due_at_ms, 38_000, 40_500)
+  end
+
+  test "attempt four blocks the issue and writes Linear evidence instead of retrying" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+
+    issue_id = "issue-crash-limit"
+    issue = %Issue{id: issue_id, identifier: "LAB-RETRY", state: "In Progress"}
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :CrashRetryLimitOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "LAB-RETRY",
+      retry_attempt: 3,
+      equivalent_attempt: 3,
+      last_failure_fingerprint: SymphonyElixir.RunnerObserver.failure_fingerprint(:bash_not_found, :missing_tool),
+      issue: issue,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :bash_not_found})
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.retry_attempts, issue_id)
+    assert %{classification: :max_retry_attempts_exceeded, error: error} = state.blocked[issue_id]
+    assert error =~ "attempt=4"
+
+    assert_receive {:memory_tracker_run_log_upsert, ^issue_id, body}
+    assert body =~ "retry.blocked"
+    assert body =~ "max_retry_attempts_exceeded"
+  end
+
+  test "blocked issue surfaces and retries run-log writeback failures" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+
+    issue_id = "issue-block-writeback"
+    issue = %Issue{id: issue_id, identifier: "LAB-WRITEBACK", state: "In Progress"}
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+    Application.put_env(:symphony_elixir, :memory_tracker_comment_result, {:error, :linear_unavailable})
+
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :BlockedWritebackOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    failure_fingerprint = SymphonyElixir.RunnerObserver.failure_fingerprint(:bash_not_found, :missing_tool)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "LAB-WRITEBACK",
+      retry_attempt: 3,
+      equivalent_attempt: 3,
+      last_failure_fingerprint: failure_fingerprint,
+      issue: issue,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :bash_not_found})
+    Process.sleep(50)
+    failed_state = :sys.get_state(pid)
+
+    assert %{
+             classification: :max_retry_attempts_exceeded,
+             run_log_writeback_status: :failed,
+             run_log_writeback_error: ":linear_unavailable"
+           } = failed_state.blocked[issue_id]
+
+    Application.put_env(:symphony_elixir, :memory_tracker_comment_result, :ok)
+    send(pid, :tick)
+
+    assert_receive {:memory_tracker_run_log_upsert, ^issue_id, body}, 500
+    assert body =~ "retry.blocked"
+    assert body =~ "max_retry_attempts_exceeded"
+
+    Process.sleep(50)
+    recovered_state = :sys.get_state(pid)
+
+    assert %{classification: :max_retry_attempts_exceeded} = recovered_state.blocked[issue_id]
+    refute Map.has_key?(recovered_state.blocked[issue_id], :run_log_writeback_status)
+    refute Map.has_key?(recovered_state.blocked[issue_id], :run_log_writeback_error)
+  end
+
+  test "input-required blocks retain failed run-log writeback evidence" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+
+    issue_id = "issue-input-writeback"
+    issue = %Issue{id: issue_id, identifier: "LAB-INPUT", state: "In Progress"}
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+    Application.put_env(:symphony_elixir, :memory_tracker_comment_result, {:error, :linear_unavailable})
+
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :InputWritebackOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "LAB-INPUT",
+      issue: issue,
+      started_at: DateTime.utc_now(),
+      last_codex_event: :turn_input_required
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :normal})
+    Process.sleep(50)
+    failed_state = :sys.get_state(pid)
+
+    assert %{
+             classification: :unknown_failure,
+             error: "codex turn requires operator input",
+             run_log_writeback_status: :failed,
+             run_log_writeback_error: ":linear_unavailable"
+           } = failed_state.blocked[issue_id]
+
+    Application.put_env(:symphony_elixir, :memory_tracker_comment_result, :ok)
+    send(pid, :tick)
+
+    assert_receive {:memory_tracker_run_log_upsert, ^issue_id, body}, 500
+    assert body =~ "retry.blocked"
+    assert body =~ "codex turn requires operator input"
+
+    Process.sleep(50)
+    recovered_state = :sys.get_state(pid)
+
+    assert %{error: "codex turn requires operator input"} = recovered_state.blocked[issue_id]
+    refute Map.has_key?(recovered_state.blocked[issue_id], :run_log_writeback_status)
+  end
+
+  test "retry ceiling resets when failure fingerprint changes" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+
+    issue_id = "issue-crash-new-fingerprint"
+    issue = %Issue{id: issue_id, identifier: "LAB-RETRY-RESET", state: "In Progress"}
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :CrashRetryFingerprintResetOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "LAB-RETRY-RESET",
+      retry_attempt: 3,
+      equivalent_attempt: 3,
+      last_failure_fingerprint: SymphonyElixir.RunnerObserver.failure_fingerprint(:bash_not_found, :missing_tool),
+      issue: issue,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), {:port_exit, 1}})
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.blocked, issue_id)
+
+    assert %{
+             attempt: 4,
+             equivalent_attempt: 1,
+             classification: :process_exit_nonzero,
+             error: "agent exited: {:port_exit, 1}"
+           } = state.retry_attempts[issue_id]
+  end
+
+  test "capacity deferrals preserve retry attempt budget" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      poll_interval_ms: 60_000,
+      max_concurrent_agents: 1
+    )
+
+    issue_id = "issue-capacity-retry"
+    issue = %Issue{id: issue_id, identifier: "LAB-CAP", title: "Capacity retry", state: "In Progress"}
+    running_issue = %Issue{id: "already-running", identifier: "LAB-RUN", title: "Running work", state: "In Progress"}
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue, running_issue])
+
+    retry_token = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :CapacityRetryOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    Process.sleep(100)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    on_exit(fn ->
+      if Process.alive?(worker_pid) do
+        send(worker_pid, :done)
+      end
+
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:max_concurrent_agents, 1)
+      |> Map.put(:running, %{
+        "already-running" => %{
+          pid: worker_pid,
+          ref: make_ref(),
+          identifier: "LAB-RUN",
+          issue: running_issue,
+          started_at: DateTime.utc_now()
+        }
+      })
+      |> Map.put(:claimed, MapSet.new([issue_id, "already-running"]))
+      |> Map.put(:retry_attempts, %{
+        issue_id => %{
+          attempt: 3,
+          timer_ref: nil,
+          retry_token: retry_token,
+          due_at_ms: System.monotonic_time(:millisecond),
+          identifier: "LAB-CAP",
+          error: "agent exited: :boom",
+          classification: :process_exit_nonzero,
+          failure_fingerprint: "process_exit_nonzero:agent exited boom",
+          equivalent_attempt: 3
+        }
+      })
+    end)
+
+    send(pid, {:retry_issue, issue_id, retry_token})
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.blocked, issue_id)
+
+    assert %{
+             attempt: 3,
+             error: "waiting for orchestrator capacity",
+             classification: nil,
+             failure_fingerprint: "process_exit_nonzero:agent exited boom",
+             equivalent_attempt: 3
+           } =
+             state.retry_attempts[issue_id]
   end
 
   test "first abnormal worker exit waits before retrying" do

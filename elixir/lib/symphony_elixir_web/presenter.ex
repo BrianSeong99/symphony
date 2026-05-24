@@ -118,6 +118,7 @@ defmodule SymphonyElixirWeb.Presenter do
         total_tokens: entry.codex_total_tokens
       }
     }
+    |> put_observer_fields(entry)
   end
 
   defp retry_entry_payload(entry) do
@@ -130,6 +131,7 @@ defmodule SymphonyElixirWeb.Presenter do
       worker_host: Map.get(entry, :worker_host),
       workspace_path: Map.get(entry, :workspace_path)
     }
+    |> put_observer_fields(entry)
   end
 
   defp blocked_entry_payload(entry) do
@@ -146,6 +148,8 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(entry.last_codex_message),
       last_event_at: iso8601(entry.last_codex_timestamp)
     }
+    |> put_observer_fields(entry)
+    |> put_writeback_fields(entry)
   end
 
   defp running_issue_payload(running) do
@@ -165,6 +169,7 @@ defmodule SymphonyElixirWeb.Presenter do
         total_tokens: running.codex_total_tokens
       }
     }
+    |> put_observer_fields(running)
   end
 
   defp retry_issue_payload(retry) do
@@ -175,6 +180,7 @@ defmodule SymphonyElixirWeb.Presenter do
       worker_host: Map.get(retry, :worker_host),
       workspace_path: Map.get(retry, :workspace_path)
     }
+    |> put_observer_fields(retry)
   end
 
   defp blocked_issue_payload(blocked) do
@@ -189,6 +195,8 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(blocked.last_codex_message),
       last_event_at: iso8601(blocked.last_codex_timestamp)
     }
+    |> put_observer_fields(blocked)
+    |> put_writeback_fields(blocked)
   end
 
   defp workspace_path(issue_identifier, running, retry, blocked) do
@@ -236,4 +244,21 @@ defmodule SymphonyElixirWeb.Presenter do
   end
 
   defp iso8601(_datetime), do: nil
+
+  defp put_observer_fields(map, entry) do
+    map
+    |> maybe_put(:classification, Map.get(entry, :classification))
+    |> maybe_put(:failure_fingerprint, Map.get(entry, :failure_fingerprint))
+    |> maybe_put(:suggested_action, Map.get(entry, :suggested_action))
+  end
+
+  defp put_writeback_fields(map, entry) do
+    map
+    |> maybe_put(:run_log_writeback_status, Map.get(entry, :run_log_writeback_status))
+    |> maybe_put(:run_log_writeback_error, Map.get(entry, :run_log_writeback_error))
+    |> maybe_put(:run_log_writeback_failed_at, iso8601(Map.get(entry, :run_log_writeback_failed_at)))
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end
