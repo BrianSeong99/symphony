@@ -24,6 +24,7 @@ defmodule SymphonyElixirWeb.Presenter do
           codex_totals: snapshot.codex_totals,
           rate_limits: snapshot.rate_limits
         }
+        |> maybe_put(:tracker_rate_limit, Map.get(snapshot, :tracker_rate_limit))
 
       :timeout ->
         %{generated_at: generated_at, error: %{code: "snapshot_timeout", message: "Snapshot timed out"}}

@@ -176,13 +176,42 @@ defmodule SymphonyElixir.Linear.Client do
             linear_error_context(payload, response)
         )
 
-        {:error, {:linear_api_status, response.status}}
+        {:error, classify_linear_error_response(response)}
 
       {:error, reason} ->
         Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
         {:error, {:linear_api_request, reason}}
     end
   end
+
+  defp classify_linear_error_response(%{body: body, status: status}) do
+    case rate_limit_duration_ms(body) do
+      duration_ms when is_integer(duration_ms) and duration_ms > 0 ->
+        {:linear_api_rate_limited, duration_ms}
+
+      _ ->
+        {:linear_api_status, status}
+    end
+  end
+
+  defp classify_linear_error_response(%{status: status}), do: {:linear_api_status, status}
+
+  defp rate_limit_duration_ms(%{"errors" => errors}) when is_list(errors) do
+    Enum.find_value(errors, &rate_limit_error_duration_ms/1)
+  end
+
+  defp rate_limit_duration_ms(_body), do: nil
+
+  defp rate_limit_error_duration_ms(%{"extensions" => %{"code" => "RATELIMITED"} = extensions}) do
+    extensions
+    |> get_in(["meta", "rateLimitResult", "duration"])
+    |> normalize_duration_ms()
+  end
+
+  defp rate_limit_error_duration_ms(_error), do: nil
+
+  defp normalize_duration_ms(duration) when is_integer(duration) and duration > 0, do: duration
+  defp normalize_duration_ms(_duration), do: 3_600_000
 
   @doc false
   @spec normalize_issue_for_test(map()) :: Issue.t() | nil
