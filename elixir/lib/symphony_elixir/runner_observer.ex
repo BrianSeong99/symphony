@@ -53,6 +53,8 @@ defmodule SymphonyElixir.RunnerObserver do
        "permission denied",
        "approval_required",
        "requires approval",
+       "eperm",
+       "operation not permitted",
        "mcpserver/elicitation/request",
        "codex_approval_kind",
        "mcp_tool_call",
@@ -63,7 +65,17 @@ defmodule SymphonyElixir.RunnerObserver do
     {:requirements_mismatch, ["requirements_mismatch", "validation contract", "acceptance criteria mismatch"]},
     {:validation_failure_repeat, ["validation_failure_repeat", "test failure", "mix test", "validation failed"]},
     {:tool_failure_repeat, ["tool_failure_repeat", "tool_call_failed"]},
-    {:external_service_failure, ["econnrefused", "timeout connecting", "external_service_failure", "service unavailable"]},
+    {:external_service_failure,
+     [
+       "econnrefused",
+       "timeout connecting",
+       "external_service_failure",
+       "service unavailable",
+       "could not resolve host",
+       "could not reach host",
+       "name or service not known",
+       "temporary failure in name resolution"
+     ]},
     {:budget_exhausted, ["budget_exhausted", "max-budget", "budget exceeded"]},
     {:max_turns_exceeded, ["max_turns_exceeded", "max turns"]},
     {:turn_failed, ["turn_failed", "turn/failed"]},
@@ -71,6 +83,18 @@ defmodule SymphonyElixir.RunnerObserver do
   ]
 
   @known_classifications Keyword.keys(@classification_patterns) ++ [:max_retry_attempts_exceeded]
+  @trusted_event_names %{
+    "malformed" => :malformed,
+    "stderr" => :stderr,
+    "startup_failed" => :startup_failed,
+    "turn_ended_with_error" => :turn_ended_with_error,
+    "turn_failed" => :turn_failed,
+    "turn_cancelled" => :turn_cancelled,
+    "tool_call_failed" => :tool_call_failed,
+    "unsupported_tool_call" => :unsupported_tool_call,
+    "turn_input_required" => :turn_input_required,
+    "approval_required" => :approval_required
+  }
 
   @spec classify_failure(failure()) :: classification()
   def classify_failure({:preflight_failed, failure}), do: classify_failure(failure)
@@ -269,7 +293,9 @@ defmodule SymphonyElixir.RunnerObserver do
              :turn_input_required,
              :approval_required
            ] ->
-        [Atom.to_string(event), trusted_payload_reason(payload, include_raw?: event in [:turn_input_required, :approval_required])]
+        include_raw? = event in [:turn_input_required, :approval_required]
+
+        [Atom.to_string(event), trusted_payload_reason(payload, include_raw?: include_raw?)]
         |> Enum.reject(&(&1 in [nil, ""]))
         |> Enum.join(" ")
 
@@ -286,19 +312,7 @@ defmodule SymphonyElixir.RunnerObserver do
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9]+/, "_")
     |> String.trim("_")
-    |> case do
-      "malformed" -> :malformed
-      "stderr" -> :stderr
-      "startup_failed" -> :startup_failed
-      "turn_ended_with_error" -> :turn_ended_with_error
-      "turn_failed" -> :turn_failed
-      "turn_cancelled" -> :turn_cancelled
-      "tool_call_failed" -> :tool_call_failed
-      "unsupported_tool_call" -> :unsupported_tool_call
-      "turn_input_required" -> :turn_input_required
-      "approval_required" -> :approval_required
-      _normalized -> nil
-    end
+    |> then(&Map.get(@trusted_event_names, &1))
   end
 
   defp normalize_event_name(_event), do: nil

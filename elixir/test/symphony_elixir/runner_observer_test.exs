@@ -9,6 +9,10 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_failure("stalled for 301000ms without codex activity") == :no_output_timeout
     assert RunnerObserver.classify_failure("403 forbidden from Linear") == :auth_failure
     assert RunnerObserver.classify_failure("acceptance criteria mismatch after validation") == :requirements_mismatch
+    assert RunnerObserver.classify_failure("Mix.PubSub start failed with :eperm") == :permission_denied_loop
+
+    assert RunnerObserver.classify_failure("fatal: unable to access URL: Could not resolve host: github.com") ==
+             :external_service_failure
   end
 
   test "classifies connector approval elicitations as non-retryable permission loops" do
@@ -68,7 +72,9 @@ defmodule SymphonyElixir.RunnerObserverTest do
   end
 
   test "classifies only trusted failure fields for runner events" do
-    assert RunnerObserver.classify_event(:startup_failed, %{reason: {:preflight_failed, %{classification: :missing_tool}}}) ==
+    startup_payload = %{reason: {:preflight_failed, %{classification: :missing_tool}}}
+
+    assert RunnerObserver.classify_event(:startup_failed, startup_payload) ==
              :missing_tool
 
     assert RunnerObserver.classify_event(:tool_call_failed, %{payload: "old validation failed text"}) ==

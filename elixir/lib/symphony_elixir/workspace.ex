@@ -168,20 +168,29 @@ defmodule SymphonyElixir.Workspace do
   defp maybe_fetch_git_base_ref(source_repo) do
     case split_remote_base_ref(Config.settings!().workspace.base_ref) do
       {:ok, remote, branch} ->
-        case System.cmd("git", ["-C", source_repo, "remote", "get-url", remote], stderr_to_stdout: true) do
-          {_remote_url, 0} ->
-            case System.cmd("git", ["-C", source_repo, "fetch", remote, branch], stderr_to_stdout: true) do
-              {_output, 0} -> :ok
-              {output, status} -> {:error, {:git_fetch_failed, source_repo, Config.settings!().workspace.base_ref, status, output}}
-            end
-
-          {_output, _status} ->
-            :ok
-        end
+        maybe_fetch_remote_base_ref(source_repo, remote, branch)
 
       :local_ref ->
         :ok
     end
+  end
+
+  defp maybe_fetch_remote_base_ref(source_repo, remote, branch) do
+    case System.cmd("git", ["-C", source_repo, "remote", "get-url", remote], stderr_to_stdout: true) do
+      {_remote_url, 0} -> fetch_remote_base_ref(source_repo, remote, branch)
+      {_output, _status} -> :ok
+    end
+  end
+
+  defp fetch_remote_base_ref(source_repo, remote, branch) do
+    case System.cmd("git", ["-C", source_repo, "fetch", remote, branch], stderr_to_stdout: true) do
+      {_output, 0} -> :ok
+      {output, status} -> git_fetch_failed(source_repo, status, output)
+    end
+  end
+
+  defp git_fetch_failed(source_repo, status, output) do
+    {:error, {:git_fetch_failed, source_repo, Config.settings!().workspace.base_ref, status, output}}
   end
 
   defp split_remote_base_ref(base_ref) when is_binary(base_ref) do

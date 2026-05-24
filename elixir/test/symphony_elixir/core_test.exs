@@ -118,6 +118,11 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(agent, "no_progress_max_tokens") == 100_000
     assert Map.get(agent, "prompt_mode") == "compact"
     assert Map.get(codex, "command") =~ "--dangerously-bypass-approvals-and-sandbox"
+    assert Map.get(codex, "command") =~ "SYMPHONY_GIT_BASE_REF=brian/main"
+    assert Map.get(codex, "command") =~ "SYMPHONY_GIT_PUSH_REMOTE=brian"
+    assert Map.get(codex, "command") =~ "SYMPHONY_GITHUB_REPO=BrianSeong99/symphony"
+    assert Map.get(codex, "thread_sandbox") == "danger-full-access"
+    assert get_in(codex, ["turn_sandbox_policy", "type"]) == "dangerFullAccess"
     assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
 
     assert String.trim(prompt) != ""

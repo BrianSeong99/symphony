@@ -152,6 +152,16 @@ Notes:
 - When `codex.turn_sandbox_policy` is set explicitly, Symphony passes the map through to Codex
   unchanged. Compatibility then depends on the targeted Codex app-server version rather than local
   Symphony validation.
+- Native unattended runners that need to commit from linked git worktrees and push PR branches should
+  set `codex.thread_sandbox: danger-full-access` and
+  `codex.turn_sandbox_policy.type: dangerFullAccess`; otherwise Codex may be unable to write the
+  shared `.git` directory or reach GitHub.
+- If a repo keeps upstream and fork remotes side by side, set explicit publish
+  environment variables in `codex.command`, for example
+  `SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=brian
+  SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main`, so
+  unattended sessions do not accidentally branch from or push to the upstream
+  remote.
 - `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue

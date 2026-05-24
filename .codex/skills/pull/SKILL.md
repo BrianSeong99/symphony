@@ -1,10 +1,10 @@
 ---
 name: pull
 description:
-  Pull latest origin/main into the current local branch and resolve merge
-  conflicts (aka update-branch). Use when Codex needs to sync a feature branch
-  with origin, perform a merge-based update (not rebase), and guide conflict
-  resolution best practices.
+  Pull the configured base branch into the current local branch and resolve
+  merge conflicts (aka update-branch). Use when Codex needs to sync a feature
+  branch with its publish/base remotes, perform a merge-based update (not
+  rebase), and guide conflict resolution best practices.
 ---
 
 # Pull
@@ -16,17 +16,17 @@ description:
    - `git config rerere.enabled true`
    - `git config rerere.autoupdate true`
 3. Confirm remotes and branches:
-   - Ensure the `origin` remote exists.
+   - Ensure the configured base remote exists. Default is `origin`; Symphony
+     runners may set `SYMPHONY_GIT_BASE_REF` or use `brian/main`.
    - Ensure the current branch is the one to receive the merge.
 4. Fetch latest refs:
-   - `git fetch origin`
+   - `base_ref="${SYMPHONY_GIT_BASE_REF:-origin/main}"; base_remote="${base_ref%%/*}"; git fetch "$base_remote"`
 5. Sync the remote feature branch first:
-   - `git pull --ff-only origin $(git branch --show-current)`
+   - `git pull --ff-only "${SYMPHONY_GIT_PUSH_REMOTE:-origin}" $(git branch --show-current)`
    - This pulls branch updates made remotely (for example, a GitHub auto-commit)
-     before merging `origin/main`.
+     before merging the configured base ref.
 6. Merge in order:
-   - Prefer `git -c merge.conflictstyle=zdiff3 merge origin/main` for clearer
-     conflict context.
+   - Prefer `git -c merge.conflictstyle=zdiff3 merge "${SYMPHONY_GIT_BASE_REF:-origin/main}"` for clearer conflict context.
 7. If conflicts appear, resolve them (see conflict guidance below), then:
    - `git add <files>`
    - `git commit` (or `git merge --continue` if the merge is paused)

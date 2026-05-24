@@ -12,6 +12,10 @@ defmodule SymphonyElixir.Orchestrator do
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
+  @dirty_progress_timeout_multiplier 2
+  @dirty_progress_token_multiplier 3
+  @committed_progress_timeout_multiplier 4
+  @committed_progress_token_multiplier 5
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @empty_codex_totals %{
@@ -612,22 +616,76 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_block_no_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens) do
-    if Map.has_key?(state.blocked, issue_id) or git_workspace_has_progress?(Map.get(running_entry, :workspace_path)) do
+    if Map.has_key?(state.blocked, issue_id) do
       state
     else
-      elapsed_ms = running_elapsed_ms(running_entry, now)
-      total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+      case git_workspace_progress_state(Map.get(running_entry, :workspace_path)) do
+        :branch_commits ->
+          maybe_block_committed_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens)
 
-      cond do
-        timeout_ms > 0 and is_integer(elapsed_ms) and elapsed_ms > timeout_ms ->
-          block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, :time)
+        :uncommitted_changes ->
+          maybe_block_dirty_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens)
 
-        max_tokens > 0 and is_integer(total_tokens) and total_tokens > max_tokens ->
-          block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, :tokens)
-
-        true ->
-          state
+        :none ->
+          maybe_block_progress_budget_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens, :time, :tokens)
       end
+    end
+  end
+
+  defp maybe_block_dirty_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens) do
+    dirty_timeout_ms = multiply_positive(timeout_ms, @dirty_progress_timeout_multiplier)
+    dirty_max_tokens = multiply_positive(max_tokens, @dirty_progress_token_multiplier)
+
+    maybe_block_progress_budget_issue(
+      state,
+      issue_id,
+      running_entry,
+      now,
+      dirty_timeout_ms,
+      dirty_max_tokens,
+      :dirty_time,
+      :dirty_tokens
+    )
+  end
+
+  defp maybe_block_committed_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens) do
+    committed_timeout_ms = multiply_positive(timeout_ms, @committed_progress_timeout_multiplier)
+    committed_max_tokens = multiply_positive(max_tokens, @committed_progress_token_multiplier)
+
+    maybe_block_progress_budget_issue(
+      state,
+      issue_id,
+      running_entry,
+      now,
+      committed_timeout_ms,
+      committed_max_tokens,
+      :committed_time,
+      :committed_tokens
+    )
+  end
+
+  defp maybe_block_progress_budget_issue(
+         state,
+         issue_id,
+         running_entry,
+         now,
+         timeout_ms,
+         max_tokens,
+         time_trigger,
+         token_trigger
+       ) do
+    elapsed_ms = running_elapsed_ms(running_entry, now)
+    total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+
+    cond do
+      timeout_ms > 0 and is_integer(elapsed_ms) and elapsed_ms > timeout_ms ->
+        block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, time_trigger)
+
+      max_tokens > 0 and is_integer(total_tokens) and total_tokens > max_tokens ->
+        block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, token_trigger)
+
+      true ->
+        state
     end
   end
 
@@ -658,12 +716,21 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp git_workspace_has_progress?(workspace) when is_binary(workspace) do
-    File.dir?(workspace) and
-      (git_has_uncommitted_changes?(workspace) or git_has_branch_commits?(workspace))
+  defp git_workspace_progress_state(workspace) when is_binary(workspace) do
+    cond do
+      not File.dir?(workspace) -> :none
+      git_has_branch_commits?(workspace) -> :branch_commits
+      git_has_uncommitted_changes?(workspace) -> :uncommitted_changes
+      true -> :none
+    end
   end
 
-  defp git_workspace_has_progress?(_workspace), do: false
+  defp git_workspace_progress_state(_workspace), do: :none
+
+  defp multiply_positive(value, multiplier) when is_integer(value) and value > 0 and is_integer(multiplier),
+    do: value * multiplier
+
+  defp multiply_positive(_value, _multiplier), do: 0
 
   defp git_has_uncommitted_changes?(workspace) do
     case System.cmd("git", ["-C", workspace, "status", "--porcelain"], stderr_to_stdout: true) do
