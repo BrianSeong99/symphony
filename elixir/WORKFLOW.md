@@ -17,20 +17,28 @@ polling:
   interval_ms: 5000
 workspace:
   root: ~/Develop/Labs/symphony-workspaces
+  source_repo: ~/Develop/Labs/worktrees/symphony-homelab-deployment
+  base_ref: brian/main
+  branch_prefix: brian/symphony
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/BrianSeong99/symphony .
     if command -v mise >/dev/null 2>&1; then
       cd elixir && mise trust && mise exec -- mix deps.get
     fi
+  before_run: |
+    git_dir="$(git rev-parse --git-dir)"
+    common_dir="$(git rev-parse --git-common-dir)"
+    test "$git_dir" != "$common_dir"
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
   max_concurrent_agents: 10
   max_turns: 20
   max_retry_attempts: 3
+  no_progress_timeout_ms: 180000
+  no_progress_max_tokens: 300000
 codex:
-  command: /Users/brianseong/.local/bin/codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
+  command: /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:

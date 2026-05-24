@@ -964,6 +964,119 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert remaining_ms <= 10_500
   end
 
+  test "orchestrator blocks runs that exceed no-progress budget without git changes" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      no_progress_timeout_ms: 1_000,
+      no_progress_max_tokens: 10_000
+    )
+
+    issue_id = "issue-no-progress"
+    orchestrator_name = Module.concat(__MODULE__, :NoProgressOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    started_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-NO-PROGRESS",
+      issue: %Issue{id: issue_id, identifier: "LAB-NO-PROGRESS", state: "In Progress"},
+      workspace_path: nil,
+      session_id: "thread-no-progress-turn-1",
+      codex_total_tokens: 12_000,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Process.alive?(worker_pid)
+    refute Map.has_key?(state.running, issue_id)
+
+    assert %{
+             identifier: "LAB-NO-PROGRESS",
+             classification: :no_progress_budget_exceeded,
+             error: error,
+             suggested_action: suggested_action
+           } = state.blocked[issue_id]
+
+    assert error =~ "no_progress_budget_exceeded"
+    assert suggested_action =~ "no branch/file/PR progress"
+  end
+
+  test "orchestrator can cancel an active run and preserve blocked evidence" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
+
+    issue_id = "issue-cancel"
+    orchestrator_name = Module.concat(__MODULE__, :CancelOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-CANCEL",
+      issue: %Issue{id: issue_id, identifier: "LAB-CANCEL", state: "In Progress"},
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    assert {:ok, %{identifier: "LAB-CANCEL", reason: "smoke test stop"}} =
+             Orchestrator.cancel_issue(orchestrator_name, issue_id, "smoke test stop")
+
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Process.alive?(worker_pid)
+    refute Map.has_key?(state.running, issue_id)
+    assert %{error: "operator_cancelled: smoke test stop"} = state.blocked[issue_id]
+  end
+
   test "orchestrator blocks repeated equivalent stalls at the retry ceiling" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,

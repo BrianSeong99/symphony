@@ -305,7 +305,11 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp reconcile_running_issues(%State{} = state) do
-    state = reconcile_stalled_running_issues(state)
+    state =
+      state
+      |> reconcile_stalled_running_issues()
+      |> reconcile_no_progress_running_issues()
+
     running_ids = Map.keys(state.running)
 
     if running_ids == [] do
@@ -328,6 +332,10 @@ defmodule SymphonyElixir.Orchestrator do
       end
     end
   end
+
+  @doc false
+  @spec reconcile_no_progress_running_issues_for_test(term()) :: term()
+  def reconcile_no_progress_running_issues_for_test(%State{} = state), do: reconcile_no_progress_running_issues(state)
 
   defp reconcile_blocked_issues(%State{} = state) do
     blocked_ids = Map.keys(state.blocked)
@@ -579,6 +587,103 @@ defmodule SymphonyElixir.Orchestrator do
         Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
           maybe_restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
         end)
+    end
+  end
+
+  defp reconcile_no_progress_running_issues(%State{} = state) do
+    settings = Config.settings!().agent
+    timeout_ms = settings.no_progress_timeout_ms
+    max_tokens = settings.no_progress_max_tokens
+
+    cond do
+      timeout_ms <= 0 and max_tokens <= 0 ->
+        state
+
+      map_size(state.running) == 0 ->
+        state
+
+      true ->
+        now = DateTime.utc_now()
+
+        Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
+          maybe_block_no_progress_issue(state_acc, issue_id, running_entry, now, timeout_ms, max_tokens)
+        end)
+    end
+  end
+
+  defp maybe_block_no_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens) do
+    if Map.has_key?(state.blocked, issue_id) or git_workspace_has_progress?(Map.get(running_entry, :workspace_path)) do
+      state
+    else
+      elapsed_ms = running_elapsed_ms(running_entry, now)
+      total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+
+      cond do
+        timeout_ms > 0 and is_integer(elapsed_ms) and elapsed_ms > timeout_ms ->
+          block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, :time)
+
+        max_tokens > 0 and is_integer(total_tokens) and total_tokens > max_tokens ->
+          block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, :tokens)
+
+        true ->
+          state
+      end
+    end
+  end
+
+  defp block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, trigger) do
+    identifier = Map.get(running_entry, :identifier, issue_id)
+    session_id = running_entry_session_id(running_entry)
+    classification = :no_progress_budget_exceeded
+    reason = "no_progress_budget_exceeded trigger=#{trigger} elapsed_ms=#{elapsed_ms || "n/a"} total_tokens=#{total_tokens || 0}"
+    failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
+
+    Logger.warning("Issue blocked by no-progress budget: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} #{reason}")
+
+    running_entry =
+      running_entry
+      |> Map.put(:classification, classification)
+      |> Map.put(:failure_fingerprint, failure_fingerprint)
+      |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
+
+    state
+    |> record_session_completion_totals(running_entry)
+    |> stop_and_block_issue(issue_id, running_entry, reason)
+  end
+
+  defp running_elapsed_ms(running_entry, now) do
+    case Map.get(running_entry, :started_at) do
+      %DateTime{} = started_at -> max(0, DateTime.diff(now, started_at, :millisecond))
+      _ -> nil
+    end
+  end
+
+  defp git_workspace_has_progress?(workspace) when is_binary(workspace) do
+    File.dir?(workspace) and
+      (git_has_uncommitted_changes?(workspace) or git_has_branch_commits?(workspace))
+  end
+
+  defp git_workspace_has_progress?(_workspace), do: false
+
+  defp git_has_uncommitted_changes?(workspace) do
+    case System.cmd("git", ["-C", workspace, "status", "--porcelain"], stderr_to_stdout: true) do
+      {output, 0} -> String.trim(output) != ""
+      {_output, _status} -> false
+    end
+  end
+
+  defp git_has_branch_commits?(workspace) do
+    base_ref = Config.settings!().workspace.base_ref
+
+    case System.cmd("git", ["-C", workspace, "rev-list", "--count", "#{base_ref}..HEAD"], stderr_to_stdout: true) do
+      {output, 0} ->
+        case Integer.parse(String.trim(output)) do
+          {count, _rest} -> count > 0
+          :error -> false
+        end
+
+      {_output, _status} ->
+        false
     end
   end
 
@@ -1675,6 +1780,20 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  @spec cancel_issue(String.t(), String.t()) :: {:ok, map()} | {:error, :not_running | :unavailable}
+  def cancel_issue(issue_id, reason \\ "operator_cancelled") do
+    cancel_issue(__MODULE__, issue_id, reason)
+  end
+
+  @spec cancel_issue(GenServer.server(), String.t(), String.t()) :: {:ok, map()} | {:error, :not_running | :unavailable}
+  def cancel_issue(server, issue_id, reason) when is_binary(issue_id) and is_binary(reason) do
+    if Process.whereis(server) do
+      GenServer.call(server, {:cancel_issue, issue_id, reason})
+    else
+      {:error, :unavailable}
+    end
+  end
+
   @spec snapshot() :: map() | :timeout | :unavailable
   def snapshot, do: snapshot(__MODULE__, 15_000)
 
@@ -1793,6 +1912,31 @@ defmodule SymphonyElixir.Orchestrator do
        requested_at: DateTime.utc_now(),
        operations: ["poll", "reconcile"]
      }, state}
+  end
+
+  def handle_call({:cancel_issue, issue_id, reason}, _from, state) when is_binary(issue_id) do
+    case Map.get(state.running, issue_id) do
+      nil ->
+        {:reply, {:error, :not_running}, state}
+
+      running_entry ->
+        cancelled_at = DateTime.utc_now()
+        error = "operator_cancelled: #{reason}"
+
+        updated_state =
+          state
+          |> record_session_completion_totals(running_entry)
+          |> stop_and_block_issue(issue_id, running_entry, error)
+
+        {:reply,
+         {:ok,
+          %{
+            issue_id: issue_id,
+            identifier: Map.get(running_entry, :identifier, issue_id),
+            cancelled_at: cancelled_at,
+            reason: reason
+          }}, updated_state}
+    end
   end
 
   defp blocked_issue_state(%{issue: %Issue{state: state}}), do: state

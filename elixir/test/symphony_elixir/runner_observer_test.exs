@@ -27,6 +27,34 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_event(:stderr, "invalid json from app-server stream") == :no_json_event_timeout
   end
 
+  test "ignores historical run-log text inside benign event payloads" do
+    old_log_payload = %{
+      payload: %{
+        "method" => "item/tool/call",
+        "params" => %{
+          "arguments" => %{
+            "body" => "previous Symphony run log contained missing_tool, auth_failure, and validation_failure_repeat"
+          }
+        }
+      },
+      raw: "previous Symphony run log contained missing_tool and auth_failure"
+    }
+
+    refute RunnerObserver.classify_event(:notification, old_log_payload)
+    refute RunnerObserver.classify_event(:tool_call_completed, old_log_payload)
+  end
+
+  test "classifies only trusted failure fields for runner events" do
+    assert RunnerObserver.classify_event(:startup_failed, %{reason: {:preflight_failed, %{classification: :missing_tool}}}) ==
+             :missing_tool
+
+    assert RunnerObserver.classify_event(:tool_call_failed, %{payload: "old validation failed text"}) ==
+             :tool_failure_repeat
+
+    assert RunnerObserver.classify_event(:turn_ended_with_error, %{reason: "no_progress_budget_exceeded"}) ==
+             :no_progress_budget_exceeded
+  end
+
   test "preflight reports missing command tools with deterministic evidence" do
     assert {:error,
             %{

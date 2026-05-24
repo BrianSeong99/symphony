@@ -102,12 +102,17 @@ defmodule SymphonyElixir.TestSupport do
           tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
+          workspace_source_repo: nil,
+          workspace_base_ref: "origin/main",
+          workspace_branch_prefix: "symphony",
           worker_ssh_hosts: [],
           worker_max_concurrent_agents_per_host: nil,
           max_concurrent_agents: 10,
           max_turns: 20,
           max_retry_attempts: 3,
           max_retry_backoff_ms: 300_000,
+          no_progress_timeout_ms: 300_000,
+          no_progress_max_tokens: 300_000,
           max_concurrent_agents_by_state: %{},
           codex_command: "codex app-server",
           codex_approval_policy: %{reject: %{sandbox_approval: true, rules: true, mcp_elicitations: true}},
@@ -140,12 +145,17 @@ defmodule SymphonyElixir.TestSupport do
     tracker_terminal_states = Keyword.get(config, :tracker_terminal_states)
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
     workspace_root = Keyword.get(config, :workspace_root)
+    workspace_source_repo = Keyword.get(config, :workspace_source_repo)
+    workspace_base_ref = Keyword.get(config, :workspace_base_ref)
+    workspace_branch_prefix = Keyword.get(config, :workspace_branch_prefix)
     worker_ssh_hosts = Keyword.get(config, :worker_ssh_hosts)
     worker_max_concurrent_agents_per_host = Keyword.get(config, :worker_max_concurrent_agents_per_host)
     max_concurrent_agents = Keyword.get(config, :max_concurrent_agents)
     max_turns = Keyword.get(config, :max_turns)
     max_retry_attempts = Keyword.get(config, :max_retry_attempts)
     max_retry_backoff_ms = Keyword.get(config, :max_retry_backoff_ms)
+    no_progress_timeout_ms = Keyword.get(config, :no_progress_timeout_ms)
+    no_progress_max_tokens = Keyword.get(config, :no_progress_max_tokens)
     max_concurrent_agents_by_state = Keyword.get(config, :max_concurrent_agents_by_state)
     codex_command = Keyword.get(config, :codex_command)
     codex_approval_policy = Keyword.get(config, :codex_approval_policy)
@@ -181,12 +191,17 @@ defmodule SymphonyElixir.TestSupport do
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
         "workspace:",
         "  root: #{yaml_value(workspace_root)}",
+        "  source_repo: #{yaml_value(workspace_source_repo)}",
+        "  base_ref: #{yaml_value(workspace_base_ref)}",
+        "  branch_prefix: #{yaml_value(workspace_branch_prefix)}",
         worker_yaml(worker_ssh_hosts, worker_max_concurrent_agents_per_host),
         "agent:",
         "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",
         "  max_turns: #{yaml_value(max_turns)}",
         "  max_retry_attempts: #{yaml_value(max_retry_attempts)}",
         "  max_retry_backoff_ms: #{yaml_value(max_retry_backoff_ms)}",
+        "  no_progress_timeout_ms: #{yaml_value(no_progress_timeout_ms)}",
+        "  no_progress_max_tokens: #{yaml_value(no_progress_max_tokens)}",
         "  max_concurrent_agents_by_state: #{yaml_value(max_concurrent_agents_by_state)}",
         "codex:",
         "  command: #{yaml_value(codex_command)}",

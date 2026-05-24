@@ -104,10 +104,19 @@ defmodule SymphonyElixir.CoreTest do
     assert is_list(Map.get(tracker, "terminal_states"))
 
     hooks = Map.get(config, "hooks", %{})
+    workspace = Map.get(config, "workspace", %{})
+    agent = Map.get(config, "agent", %{})
+    codex = Map.get(config, "codex", %{})
     assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/BrianSeong99/symphony ."
+    assert Map.get(workspace, "source_repo") =~ "symphony-homelab-deployment"
+    assert Map.get(workspace, "base_ref") == "brian/main"
+    assert Map.get(workspace, "branch_prefix") == "brian/symphony"
     assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
     assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
+    assert Map.get(hooks, "before_run") =~ "git rev-parse --git-dir"
+    assert Map.get(agent, "no_progress_timeout_ms") == 180_000
+    assert Map.get(agent, "no_progress_max_tokens") == 300_000
+    assert Map.get(codex, "command") =~ "--dangerously-bypass-approvals-and-sandbox"
     assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
 
     assert String.trim(prompt) != ""

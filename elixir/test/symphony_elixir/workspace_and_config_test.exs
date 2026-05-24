@@ -40,6 +40,47 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "workspace can be created as a real git worktree from configured source repo" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-worktree-workspace-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      source_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+
+      File.mkdir_p!(source_repo)
+      File.write!(Path.join(source_repo, "README.md"), "source\n")
+      System.cmd("git", ["-C", source_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", source_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", source_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      System.cmd("git", ["-C", source_repo, "commit", "-m", "initial"])
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        workspace_source_repo: source_repo,
+        workspace_base_ref: "main",
+        workspace_branch_prefix: "test/symphony"
+      )
+
+      assert {:ok, workspace} = Workspace.create_for_issue("LAB-58")
+      assert File.read!(Path.join(workspace, "README.md")) == "source\n"
+      assert {"test/symphony/LAB-58\n", 0} = System.cmd("git", ["-C", workspace, "branch", "--show-current"])
+
+      {git_dir, 0} = System.cmd("git", ["-C", workspace, "rev-parse", "--git-dir"])
+      {common_dir, 0} = System.cmd("git", ["-C", workspace, "rev-parse", "--git-common-dir"])
+      refute String.trim(git_dir) == String.trim(common_dir)
+
+      assert {:ok, _} = Workspace.remove(workspace)
+      refute File.exists?(workspace)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "workspace path is deterministic per issue identifier" do
     workspace_root =
       Path.join(

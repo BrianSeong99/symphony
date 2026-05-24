@@ -91,12 +91,15 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
     embedded_schema do
       field(:root, :string, default: Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      field(:source_repo, :string)
+      field(:base_ref, :string, default: "origin/main")
+      field(:branch_prefix, :string, default: "symphony")
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:root], empty_values: [])
+      |> cast(attrs, [:root, :source_repo, :base_ref, :branch_prefix], empty_values: [])
     end
   end
 
@@ -133,6 +136,8 @@ defmodule SymphonyElixir.Config.Schema do
       field(:max_retry_attempts, :integer, default: 3)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
       field(:max_concurrent_agents_by_state, :map, default: %{})
+      field(:no_progress_timeout_ms, :integer, default: 300_000)
+      field(:no_progress_max_tokens, :integer, default: 300_000)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -145,7 +150,9 @@ defmodule SymphonyElixir.Config.Schema do
           :max_turns,
           :max_retry_attempts,
           :max_retry_backoff_ms,
-          :max_concurrent_agents_by_state
+          :max_concurrent_agents_by_state,
+          :no_progress_timeout_ms,
+          :no_progress_max_tokens
         ],
         empty_values: []
       )
@@ -153,6 +160,8 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_attempts, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
+      |> validate_number(:no_progress_timeout_ms, greater_than_or_equal_to: 0)
+      |> validate_number(:no_progress_max_tokens, greater_than_or_equal_to: 0)
       |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
       |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
     end
@@ -382,7 +391,10 @@ defmodule SymphonyElixir.Config.Schema do
 
     workspace = %{
       settings.workspace
-      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces")),
+        source_repo: resolve_optional_path_value(settings.workspace.source_repo),
+        base_ref: normalize_string_setting(settings.workspace.base_ref, "origin/main"),
+        branch_prefix: normalize_string_setting(settings.workspace.branch_prefix, "symphony")
     }
 
     codex = %{
@@ -442,6 +454,26 @@ defmodule SymphonyElixir.Config.Schema do
         path
     end
   end
+
+  defp resolve_optional_path_value(nil), do: nil
+  defp resolve_optional_path_value(""), do: nil
+
+  defp resolve_optional_path_value(value) when is_binary(value) do
+    case normalize_path_token(value) do
+      :missing -> nil
+      "" -> nil
+      path -> path
+    end
+  end
+
+  defp normalize_string_setting(value, fallback) when is_binary(value) do
+    case String.trim(value) do
+      "" -> fallback
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_string_setting(_value, fallback), do: fallback
 
   defp resolve_env_value(value, fallback) when is_binary(value) do
     case env_reference_name(value) do

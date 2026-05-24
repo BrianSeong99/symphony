@@ -37,6 +37,24 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
     end
   end
 
+  @spec cancel_run(Conn.t(), map()) :: Conn.t()
+  def cancel_run(conn, %{"issue_id" => issue_id} = params) do
+    reason = Map.get(params, "reason", "operator_cancelled")
+
+    case SymphonyElixir.Orchestrator.cancel_issue(orchestrator(), issue_id, reason) do
+      {:ok, payload} ->
+        conn
+        |> put_status(202)
+        |> json(%{cancelled: true, run: Map.update!(payload, :cancelled_at, &DateTime.to_iso8601/1)})
+
+      {:error, :not_running} ->
+        error_response(conn, 404, "run_not_running", "Run is not currently running")
+
+      {:error, :unavailable} ->
+        error_response(conn, 503, "orchestrator_unavailable", "Orchestrator is unavailable")
+    end
+  end
+
   @spec method_not_allowed(Conn.t(), map()) :: Conn.t()
   def method_not_allowed(conn, _params) do
     error_response(conn, 405, "method_not_allowed", "Method not allowed")

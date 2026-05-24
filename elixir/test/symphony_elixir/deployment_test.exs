@@ -60,6 +60,7 @@ defmodule SymphonyElixir.DeploymentTest do
     assert compose["name"] == "symphony"
     assert compose["services"]["db"]["ports"] in [nil, []]
     assert compose["services"]["web"]["ports"] in [nil, []]
+    assert compose["services"]["web"]["environment"]["SYMPHONY_RUNNER_ENABLED"] == "false"
     assert "homelab" in compose["services"]["web"]["networks"]
     assert compose["networks"]["homelab"] == %{"external" => true, "name" => "homelab"}
     assert compose["services"]["web"]["healthcheck"]["test"] == ["CMD-SHELL", "curl -fsS http://127.0.0.1:4000/healthz >/dev/null"]

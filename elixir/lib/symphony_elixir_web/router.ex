@@ -47,6 +47,8 @@ defmodule SymphonyElixirWeb.Router do
     match(:*, "/api/v1/linear/webhooks", ObservabilityApiController, :method_not_allowed)
     post("/api/v1/refresh", ObservabilityApiController, :refresh)
     match(:*, "/api/v1/refresh", ObservabilityApiController, :method_not_allowed)
+    post("/api/v1/runs/:issue_id/cancel", ObservabilityApiController, :cancel_run)
+    match(:*, "/api/v1/runs/:issue_id/cancel", ObservabilityApiController, :method_not_allowed)
     post("/api/v1/linear/actions", LinearActionController, :execute)
     match(:*, "/api/v1/linear/actions", ObservabilityApiController, :method_not_allowed)
     match(:*, "/api/v1/runtime/:resource", ObservabilityApiController, :method_not_allowed)
