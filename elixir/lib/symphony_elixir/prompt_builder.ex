@@ -74,6 +74,7 @@ defmodule SymphonyElixir.PromptBuilder do
       "- Branches must be based on `main`; do not create stacked PRs.",
       "- Symphony backend owns routine Linear run-log writeback. Do not use `linear_graphql` during startup unless required issue data is missing or requirements must be changed.",
       "- For small tasks, inspect or edit repository files within 45 seconds. Do not spend the opening turn maintaining Linear workpads.",
+      "- Your first action after reading this prompt should be a repository command such as `pwd`, `git status --short`, `find`, `rg`, or opening the relevant guidance file. Do not spend the opening turn only reasoning.",
       "- Optional MCP tools such as Notion are not required and missing optional tools are not blockers.",
       "- If requirements are wrong or validation is misaligned, record the required issue update through Linear, then continue in the same session.",
       "",

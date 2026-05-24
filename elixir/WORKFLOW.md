@@ -39,7 +39,7 @@ agent:
   no_progress_max_tokens: 100000
   prompt_mode: compact
 codex:
-  command: /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
+  command: /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config model_reasoning_effort=low app-server
   approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:
@@ -137,6 +137,9 @@ final PR/merge evidence cannot be handled by GitHub/linkbacks.
 For small implementation tasks, first inspect or edit repository files within
 45 seconds of session start. Do not spend the opening turn creating or
 reconciling Linear workpads before touching the repository.
+Your first action after reading this prompt should be a repository command
+such as `pwd`, `git status --short`, `find`, `rg`, or opening the relevant
+guidance file. Do not spend the opening turn only reasoning.
 
 ## Default posture
 

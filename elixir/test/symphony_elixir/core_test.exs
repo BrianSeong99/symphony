@@ -1281,6 +1281,7 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "Identifier: LAB-FAST"
     assert prompt =~ "Do not use `linear_graphql` during startup"
     assert prompt =~ "inspect or edit repository files within 45 seconds"
+    assert prompt =~ "first action after reading this prompt should be a repository command"
     refute prompt =~ "## Step 0"
     refute prompt =~ "Codex Workpad"
   end
