@@ -1030,6 +1030,64 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert suggested_action =~ "no branch/file/PR progress"
   end
 
+  test "orchestrator no-progress token budget ignores cached context tokens" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      no_progress_timeout_ms: 60_000,
+      no_progress_max_tokens: 10_000
+    )
+
+    issue_id = "issue-cached-token-progress"
+    orchestrator_name = Module.concat(__MODULE__, :CachedTokenProgressOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    started_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-CACHED-TOKENS",
+      issue: %Issue{id: issue_id, identifier: "LAB-CACHED-TOKENS", state: "In Progress"},
+      workspace_path: nil,
+      session_id: "thread-cached-token-turn-1",
+      codex_total_tokens: 221_646,
+      codex_uncached_total_tokens: 3_200,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(worker_pid)
+    assert Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.blocked, issue_id)
+  end
+
   test "orchestrator blocks dirty worktrees that never commit or publish" do
     workspace =
       Path.join(System.tmp_dir!(), "symphony-dirty-progress-#{System.unique_integer([:positive])}")
