@@ -114,8 +114,8 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
     assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
     assert Map.get(hooks, "before_run") =~ "git rev-parse --git-dir"
-    assert Map.get(agent, "no_progress_timeout_ms") == 180_000
-    assert Map.get(agent, "no_progress_max_tokens") == 300_000
+    assert Map.get(agent, "no_progress_timeout_ms") == 90_000
+    assert Map.get(agent, "no_progress_max_tokens") == 100_000
     assert Map.get(codex, "command") =~ "--dangerously-bypass-approvals-and-sandbox"
     assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
 

@@ -31,10 +31,8 @@ run_elixir() {
   fi
 }
 
-if [ ! -x ./bin/symphony ]; then
-  run_elixir mix deps.get
-  run_elixir mix escript.build
-fi
+run_elixir mix deps.get
+run_elixir mix escript.build
 
 exec "$(command -v sh)" -c '
 if command -v mise >/dev/null 2>&1; then

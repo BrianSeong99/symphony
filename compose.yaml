@@ -3,7 +3,7 @@ name: symphony
 services:
   db:
     image: postgres:17-alpine
-    restart: unless-stopped
+    restart: "no"
     environment:
       POSTGRES_USER: symphony
       POSTGRES_PASSWORD: symphony
@@ -21,7 +21,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: brian-symphony:local
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       db:
         condition: service_healthy
