@@ -16,6 +16,18 @@ defmodule SymphonyElixir.Orchestrator do
   @dirty_progress_token_multiplier 3
   @committed_progress_timeout_multiplier 4
   @committed_progress_token_multiplier 5
+  @normal_completion_blocking_classifications MapSet.new([
+                                                :auth_failure,
+                                                :budget_exhausted,
+                                                :external_service_failure,
+                                                :max_retry_attempts_exceeded,
+                                                :max_turns_exceeded,
+                                                :missing_tool,
+                                                :no_progress_budget_exceeded,
+                                                :permission_denied_loop,
+                                                :requirements_mismatch,
+                                                :validation_failure_repeat
+                                              ])
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @empty_codex_totals %{
@@ -203,19 +215,24 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_agent_down(:normal, state, issue_id, running_entry, session_id) do
-    if input_required_blocker?(running_entry) do
-      block_input_required_agent_down(state, issue_id, running_entry, session_id, :normal)
-    else
-      Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
+    cond do
+      input_required_blocker?(running_entry) ->
+        block_input_required_agent_down(state, issue_id, running_entry, session_id, :normal)
 
-      state
-      |> complete_issue(issue_id)
-      |> schedule_issue_retry(issue_id, 1, %{
-        identifier: running_entry.identifier,
-        delay_type: :continuation,
-        worker_host: Map.get(running_entry, :worker_host),
-        workspace_path: Map.get(running_entry, :workspace_path)
-      })
+      classification = normal_completion_blocking_classification(running_entry) ->
+        block_normal_completion_agent_down(state, issue_id, running_entry, session_id, classification)
+
+      true ->
+        Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
+
+        state
+        |> complete_issue(issue_id)
+        |> schedule_issue_retry(issue_id, 1, %{
+          identifier: running_entry.identifier,
+          delay_type: :continuation,
+          worker_host: Map.get(running_entry, :worker_host),
+          workspace_path: Map.get(running_entry, :workspace_path)
+        })
     end
   end
 
@@ -231,6 +248,20 @@ defmodule SymphonyElixir.Orchestrator do
     error = blocker_error(running_entry, "agent exited: #{inspect(reason)}")
 
     Logger.warning("Agent task blocked for issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} session_id=#{session_id}: #{error}")
+
+    block_issue_from_entry(state, issue_id, running_entry, error)
+  end
+
+  defp block_normal_completion_agent_down(state, issue_id, running_entry, session_id, classification) do
+    error = "agent completed with blocking classification=#{classification}"
+
+    Logger.warning("Agent task blocked after normal completion for issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} session_id=#{session_id}: #{error}")
+
+    running_entry =
+      running_entry
+      |> Map.put(:classification, classification)
+      |> Map.put(:failure_fingerprint, RunnerObserver.failure_fingerprint(error, classification))
+      |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
 
     block_issue_from_entry(state, issue_id, running_entry, error)
   end
@@ -827,6 +858,29 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp input_required_blocker?(_running_entry), do: false
+
+  defp normal_completion_blocking_classification(running_entry) when is_map(running_entry) do
+    [
+      Map.get(running_entry, :classification),
+      classify_completion_text(Map.get(running_entry, :last_codex_message))
+    ]
+    |> Enum.find(&blocking_normal_completion_classification?/1)
+  end
+
+  defp normal_completion_blocking_classification(_running_entry), do: nil
+
+  defp classify_completion_text(nil), do: nil
+
+  defp classify_completion_text(text) do
+    case RunnerObserver.classify_failure(text) do
+      :unknown_failure -> nil
+      classification -> classification
+    end
+  end
+
+  defp blocking_normal_completion_classification?(classification) do
+    MapSet.member?(@normal_completion_blocking_classifications, classification)
+  end
 
   defp input_required_completion_outcome(completion) when is_map(completion) do
     outcome = Map.get(completion, :outcome) || Map.get(completion, "outcome")

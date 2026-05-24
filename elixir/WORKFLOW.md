@@ -22,6 +22,17 @@ workspace:
   branch_prefix: brian/symphony
 hooks:
   after_create: |
+    if git remote get-url origin >/dev/null 2>&1; then
+      git remote set-url origin https://github.com/BrianSeong99/symphony.git
+    else
+      git remote add origin https://github.com/BrianSeong99/symphony.git
+    fi
+    if git remote get-url upstream >/dev/null 2>&1; then
+      git remote set-url upstream https://github.com/openai/symphony.git
+    else
+      git remote add upstream https://github.com/openai/symphony.git
+    fi
+    git fetch origin main
     if command -v mise >/dev/null 2>&1; then
       cd elixir && mise trust && mise exec -- mix deps.get
     fi
@@ -39,7 +50,7 @@ agent:
   no_progress_max_tokens: 100000
   prompt_mode: compact
 codex:
-  command: SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=brian SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
+  command: SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
@@ -61,8 +72,9 @@ Hard defaults from Brian's global guidance:
 - Do not add AI attribution to commits, PRs, issues, comments, README files, or other public copy.
 - Branches must be cut from the configured base ref; this deployment uses
   `brian/main`. Do not create stacked PRs.
-- Publish runner branches to the configured fork remote. This deployment uses
-  `brian` and opens PRs against `BrianSeong99/symphony` base `main`.
+- Publish runner branches to the configured fork remote. This deployment makes
+  `origin` point at `BrianSeong99/symphony` and keeps upstream as
+  `openai/symphony`.
 - All implementation and review work must happen in a git worktree created from `main`.
 - LAB issues are assigned to Brian by default, require no human review by default, and may self-merge once validation and review gates pass.
 - If a repo still defaults to `master`, rename it to `main` before feature work.
@@ -284,7 +296,7 @@ Use this only when completion is blocked by missing required tools or missing au
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
 8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
     - Ensure the GitHub PR has label `symphony` (add it if missing).
-    - For this deployment, push with `git push -u "${SYMPHONY_GIT_PUSH_REMOTE:-brian}" HEAD` and create/view PRs with `gh ... --repo "${SYMPHONY_GITHUB_REPO:-BrianSeong99/symphony}" --base "${SYMPHONY_GITHUB_BASE:-main}"`.
+    - For this deployment, push with `git push -u "${SYMPHONY_GIT_PUSH_REMOTE:-origin}" HEAD` and create/view PRs with `gh ... --repo "${SYMPHONY_GITHUB_REPO:-BrianSeong99/symphony}" --base "${SYMPHONY_GITHUB_BASE:-main}"`.
 9.  Merge latest configured base ref into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.

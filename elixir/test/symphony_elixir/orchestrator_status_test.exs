@@ -1164,6 +1164,59 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert %{error: "operator_cancelled: smoke test stop"} = state.blocked[issue_id]
   end
 
+  test "orchestrator blocks normal completion when final agent message reports an auth blocker" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
+
+    issue_id = "issue-completion-blocker"
+    orchestrator_name = Module.concat(__MODULE__, :CompletionBlockerOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    ref = make_ref()
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: ref,
+      identifier: "LAB-COMPLETION-BLOCKER",
+      issue: %Issue{id: issue_id, identifier: "LAB-COMPLETION-BLOCKER", state: "Todo"},
+      started_at: DateTime.utc_now(),
+      last_codex_message: "gh pr create failed: CreatePullRequest needs the correct permissions",
+      last_codex_event: :agent_message
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {:DOWN, ref, :process, worker_pid, :normal})
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.retry_attempts, issue_id)
+
+    assert %{
+             identifier: "LAB-COMPLETION-BLOCKER",
+             classification: :auth_failure,
+             error: "agent completed with blocking classification=auth_failure"
+           } = state.blocked[issue_id]
+  end
+
   test "orchestrator blocks repeated equivalent stalls at the retry ceiling" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,

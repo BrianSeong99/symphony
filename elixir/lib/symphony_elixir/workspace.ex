@@ -203,10 +203,30 @@ defmodule SymphonyElixir.Workspace do
   defp split_remote_base_ref(_base_ref), do: :local_ref
 
   defp create_git_worktree(source_repo, workspace, branch, base_ref) do
-    if git_worktree?(workspace) do
-      :ok
-    else
+    cond do
+      git_worktree?(workspace) and git_current_branch(workspace) == branch ->
+        :ok
+
+      git_worktree?(workspace) ->
+        recreate_git_worktree(source_repo, workspace, branch, base_ref)
+
+      true ->
+        do_create_git_worktree(source_repo, workspace, branch, base_ref)
+    end
+  end
+
+  defp recreate_git_worktree(source_repo, workspace, branch, base_ref) do
+    Logger.warning("Recreating stale Symphony git worktree workspace=#{workspace} expected_branch=#{branch}")
+
+    with :ok <- remove_git_worktree(source_repo, workspace) do
       do_create_git_worktree(source_repo, workspace, branch, base_ref)
+    end
+  end
+
+  defp remove_git_worktree(source_repo, workspace) do
+    case System.cmd("git", ["-C", source_repo, "worktree", "remove", "--force", workspace], stderr_to_stdout: true) do
+      {_output, 0} -> :ok
+      {output, status} -> {:error, {:git_worktree_remove_failed, workspace, status, output}}
     end
   end
 
@@ -235,6 +255,13 @@ defmodule SymphonyElixir.Workspace do
     case System.cmd("git", ["-C", source_repo, "show-ref", "--verify", "--quiet", "refs/heads/#{branch}"], stderr_to_stdout: true) do
       {_output, 0} -> true
       {_output, _status} -> false
+    end
+  end
+
+  defp git_current_branch(workspace) do
+    case System.cmd("git", ["-C", workspace, "branch", "--show-current"], stderr_to_stdout: true) do
+      {branch, 0} -> String.trim(branch)
+      {_output, _status} -> nil
     end
   end
 

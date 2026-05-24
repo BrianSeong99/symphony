@@ -38,6 +38,14 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_event(:turn_input_required, payload) == :permission_denied_loop
   end
 
+  test "classifies final agent permission blocker messages" do
+    payload = %{
+      message: "gh pr create failed: CreatePullRequest needs the correct permissions"
+    }
+
+    assert RunnerObserver.classify_event(:agent_message, payload) == :auth_failure
+  end
+
   test "preserves preflight classifications through wrapped worker failures" do
     failure = %{
       classification: :missing_tool,

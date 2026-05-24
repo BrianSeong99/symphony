@@ -158,7 +158,7 @@ Notes:
   shared `.git` directory or reach GitHub.
 - If a repo keeps upstream and fork remotes side by side, set explicit publish
   environment variables in `codex.command`, for example
-  `SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=brian
+  `SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=origin
   SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main`, so
   unattended sessions do not accidentally branch from or push to the upstream
   remote.

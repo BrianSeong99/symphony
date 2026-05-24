@@ -81,6 +81,44 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "workspace recreates stale git worktree when branch does not match configured issue branch" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-stale-worktree-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      source_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "LAB-60")
+
+      File.mkdir_p!(source_repo)
+      File.write!(Path.join(source_repo, "README.md"), "source\n")
+      System.cmd("git", ["-C", source_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", source_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", source_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      System.cmd("git", ["-C", source_repo, "commit", "-m", "initial"])
+      System.cmd("git", ["-C", source_repo, "worktree", "add", "-b", "wrong/LAB-60", workspace, "main"])
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        workspace_source_repo: source_repo,
+        workspace_base_ref: "main",
+        workspace_branch_prefix: "test/symphony"
+      )
+
+      assert {:ok, recreated_workspace} = Workspace.create_for_issue("LAB-60")
+      assert String.ends_with?(recreated_workspace, "/workspaces/LAB-60")
+
+      assert {"test/symphony/LAB-60\n", 0} =
+               System.cmd("git", ["-C", recreated_workspace, "branch", "--show-current"])
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "workspace path is deterministic per issue identifier" do
     workspace_root =
       Path.join(

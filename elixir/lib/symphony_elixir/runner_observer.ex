@@ -41,7 +41,18 @@ defmodule SymphonyElixir.RunnerObserver do
        "command not found",
        "no such file"
      ]},
-    {:auth_failure, ["401", "403", "unauthorized", "forbidden", "missing_linear_api_token", "missing auth", "expired credential"]},
+    {:auth_failure,
+     [
+       "401",
+       "403",
+       "unauthorized",
+       "forbidden",
+       "missing_linear_api_token",
+       "missing auth",
+       "expired credential",
+       "createpullrequest",
+       "correct permissions"
+     ]},
     {:api_retries_exhausted, ["api_retries_exhausted", "retries exhausted"]},
     {:internal_error, ["internal_error", "internal error"]},
     {:compaction_stall, ["compaction_stall", "no_output_after_compaction", "precompact", "postcompact", "compaction"]},
@@ -91,6 +102,7 @@ defmodule SymphonyElixir.RunnerObserver do
     "turn_failed" => :turn_failed,
     "turn_cancelled" => :turn_cancelled,
     "tool_call_failed" => :tool_call_failed,
+    "agent_message" => :agent_message,
     "unsupported_tool_call" => :unsupported_tool_call,
     "turn_input_required" => :turn_input_required,
     "approval_required" => :approval_required
@@ -289,6 +301,7 @@ defmodule SymphonyElixir.RunnerObserver do
              :turn_failed,
              :turn_cancelled,
              :tool_call_failed,
+             :agent_message,
              :unsupported_tool_call,
              :turn_input_required,
              :approval_required
@@ -321,7 +334,7 @@ defmodule SymphonyElixir.RunnerObserver do
     include_raw? = Keyword.get(opts, :include_raw?, false)
 
     keys =
-      [:classification, "classification", :reason, "reason", :error, "error", :details, "details"]
+      [:classification, "classification", :reason, "reason", :error, "error", :details, "details", :message, "message"]
 
     raw_keys = if include_raw?, do: [:payload, "payload", :raw, "raw"], else: []
     nested_details = if include_raw?, do: trusted_nested_payload_details(payload), else: []
