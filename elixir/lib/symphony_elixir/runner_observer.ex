@@ -98,6 +98,7 @@ defmodule SymphonyElixir.RunnerObserver do
     "malformed" => :malformed,
     "stderr" => :stderr,
     "startup_failed" => :startup_failed,
+    "notification" => :notification,
     "turn_ended_with_error" => :turn_ended_with_error,
     "turn_failed" => :turn_failed,
     "turn_cancelled" => :turn_cancelled,
@@ -291,6 +292,9 @@ defmodule SymphonyElixir.RunnerObserver do
       :malformed ->
         "malformed json"
 
+      :notification ->
+        notification_failure_text(payload)
+
       :stderr ->
         trusted_payload_reason(payload, include_raw?: true)
 
@@ -315,6 +319,36 @@ defmodule SymphonyElixir.RunnerObserver do
       _event ->
         nil
     end
+  end
+
+  defp notification_failure_text(payload) do
+    text = normalize_reason(payload)
+
+    cond do
+      not command_execution_failed?(text) ->
+        nil
+
+      validation_failure_text?(text) ->
+        "validation failed #{text}"
+
+      true ->
+        "tool_call_failed #{text}"
+    end
+  end
+
+  defp command_execution_failed?(text) when is_binary(text) do
+    String.contains?(text, "command execution") and String.contains?(text, "failed")
+  end
+
+  defp validation_failure_text?(text) when is_binary(text) do
+    String.contains?(text, [
+      "mix test",
+      "exunit",
+      "test/",
+      "1 failure",
+      "2 failures",
+      "failed tests"
+    ])
   end
 
   defp normalize_event_name(event) when is_atom(event), do: event

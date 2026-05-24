@@ -46,6 +46,22 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_event(:agent_message, payload) == :auth_failure
   end
 
+  test "classifies failed validation command notifications" do
+    payload = %{
+      payload: %{
+        "method" => "item/completed",
+        "params" => %{"title" => "command execution (failed)"}
+      },
+      raw: """
+      item completed: command execution (call_123, failed)
+      SYMPHONY_SERVER_PORT=0 mix test test/symphony_elixir/runner_smoke_test.exs
+      1 test, 1 failure
+      """
+    }
+
+    assert RunnerObserver.classify_event(:notification, payload) == :validation_failure_repeat
+  end
+
   test "preserves preflight classifications through wrapped worker failures" do
     failure = %{
       classification: :missing_tool,

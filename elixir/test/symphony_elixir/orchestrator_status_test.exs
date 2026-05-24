@@ -1117,6 +1117,89 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert suggested_action =~ "no branch/file/PR progress"
   end
 
+  test "orchestrator resets no-progress budget when a worktree changes" do
+    workspace =
+      Path.join(System.tmp_dir!(), "symphony-dirty-reset-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(workspace)
+    File.write!(Path.join(workspace, "README.md"), "base\n")
+
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "init", "-b", "main"], stderr_to_stdout: true)
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "config", "user.name", "Test User"], stderr_to_stdout: true)
+
+    assert {_output, 0} =
+             System.cmd("git", ["-C", workspace, "config", "user.email", "test@example.com"], stderr_to_stdout: true)
+
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "add", "README.md"], stderr_to_stdout: true)
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "commit", "-m", "initial"], stderr_to_stdout: true)
+
+    File.write!(Path.join(workspace, "dirty.txt"), "fresh progress\n")
+
+    on_exit(fn -> File.rm_rf(workspace) end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      workspace_base_ref: "main",
+      codex_stall_timeout_ms: 0,
+      no_progress_timeout_ms: 1_000,
+      no_progress_max_tokens: 10_000
+    )
+
+    issue_id = "issue-dirty-reset"
+    orchestrator_name = Module.concat(__MODULE__, :DirtyResetOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    started_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-DIRTY-RESET",
+      issue: %Issue{id: issue_id, identifier: "LAB-DIRTY-RESET", state: "In Progress"},
+      workspace_path: workspace,
+      session_id: "thread-dirty-reset-turn-1",
+      codex_total_tokens: 35_000,
+      workspace_progress_signature: "clean-before-change",
+      workspace_progress_changed_at: started_at,
+      workspace_progress_tokens: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(worker_pid)
+    assert Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.blocked, issue_id)
+
+    assert %{workspace_progress_tokens: 35_000, workspace_progress_signature: signature} = state.running[issue_id]
+    refute signature == "clean-before-change"
+  end
+
   test "orchestrator can cancel an active run and preserve blocked evidence" do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
 

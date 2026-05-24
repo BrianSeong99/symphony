@@ -162,10 +162,13 @@ defmodule SymphonyElixir.Orchestrator do
         {:noreply, state}
 
       running_entry ->
+        now = DateTime.utc_now()
+
         updated_running_entry =
           running_entry
           |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
           |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
+          |> put_workspace_progress_baseline(now)
 
         notify_dashboard()
         {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
@@ -650,14 +653,17 @@ defmodule SymphonyElixir.Orchestrator do
     if Map.has_key?(state.blocked, issue_id) do
       state
     else
-      case git_workspace_progress_state(Map.get(running_entry, :workspace_path)) do
-        :branch_commits ->
+      case refresh_workspace_progress_state(state, issue_id, running_entry, now) do
+        {:changed, state} ->
+          state
+
+        {:current, state, running_entry, :branch_commits} ->
           maybe_block_committed_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens)
 
-        :uncommitted_changes ->
+        {:current, state, running_entry, :uncommitted_changes} ->
           maybe_block_dirty_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens)
 
-        :none ->
+        {:current, state, running_entry, :none} ->
           maybe_block_progress_budget_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens, :time, :tokens)
       end
     end
@@ -707,24 +713,45 @@ defmodule SymphonyElixir.Orchestrator do
        ) do
     elapsed_ms = running_elapsed_ms(running_entry, now)
     total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+    progress_tokens = workspace_progress_tokens(running_entry, total_tokens)
 
     cond do
       timeout_ms > 0 and is_integer(elapsed_ms) and elapsed_ms > timeout_ms ->
-        block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, time_trigger)
+        block_no_progress_issue(
+          state,
+          issue_id,
+          running_entry,
+          elapsed_ms,
+          progress_tokens,
+          total_tokens,
+          time_trigger
+        )
 
-      max_tokens > 0 and is_integer(total_tokens) and total_tokens > max_tokens ->
-        block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, token_trigger)
+      max_tokens > 0 and is_integer(progress_tokens) and progress_tokens > max_tokens ->
+        block_no_progress_issue(
+          state,
+          issue_id,
+          running_entry,
+          elapsed_ms,
+          progress_tokens,
+          total_tokens,
+          token_trigger
+        )
 
       true ->
         state
     end
   end
 
-  defp block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, trigger) do
+  defp block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, progress_tokens, total_tokens, trigger) do
     identifier = Map.get(running_entry, :identifier, issue_id)
     session_id = running_entry_session_id(running_entry)
     classification = :no_progress_budget_exceeded
-    reason = "no_progress_budget_exceeded trigger=#{trigger} elapsed_ms=#{elapsed_ms || "n/a"} total_tokens=#{total_tokens || 0}"
+
+    reason =
+      "no_progress_budget_exceeded trigger=#{trigger} elapsed_ms=#{elapsed_ms || "n/a"} " <>
+        "progress_tokens=#{progress_tokens || 0} total_tokens=#{total_tokens || 0}"
+
     failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
 
     Logger.warning("Issue blocked by no-progress budget: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} #{reason}")
@@ -741,47 +768,127 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp running_elapsed_ms(running_entry, now) do
-    case Map.get(running_entry, :started_at) do
+    case Map.get(running_entry, :workspace_progress_changed_at) || Map.get(running_entry, :started_at) do
       %DateTime{} = started_at -> max(0, DateTime.diff(now, started_at, :millisecond))
       _ -> nil
     end
   end
 
-  defp git_workspace_progress_state(workspace) when is_binary(workspace) do
+  defp workspace_progress_tokens(running_entry, total_tokens) do
+    baseline_tokens = Map.get(running_entry, :workspace_progress_tokens, 0)
+
     cond do
-      not File.dir?(workspace) -> :none
-      git_has_branch_commits?(workspace) -> :branch_commits
-      git_has_uncommitted_changes?(workspace) -> :uncommitted_changes
-      true -> :none
+      not is_integer(total_tokens) -> 0
+      not is_integer(baseline_tokens) -> total_tokens
+      true -> max(0, total_tokens - baseline_tokens)
     end
   end
 
-  defp git_workspace_progress_state(_workspace), do: :none
+  defp put_workspace_progress_baseline(running_entry, now) when is_map(running_entry) do
+    case git_workspace_progress_snapshot(Map.get(running_entry, :workspace_path)) do
+      %{signature: signature} ->
+        running_entry
+        |> Map.put(:workspace_progress_signature, signature)
+        |> Map.put(:workspace_progress_changed_at, now)
+        |> Map.put(:workspace_progress_tokens, Map.get(running_entry, :codex_total_tokens, 0))
+
+      nil ->
+        running_entry
+    end
+  end
+
+  defp put_workspace_progress_baseline(running_entry, _now), do: running_entry
+
+  defp refresh_workspace_progress_state(state, issue_id, running_entry, now) do
+    case git_workspace_progress_snapshot(Map.get(running_entry, :workspace_path)) do
+      nil ->
+        {:current, state, running_entry, :none}
+
+      %{state: progress_state, signature: signature} ->
+        refresh_workspace_progress_signature(state, issue_id, running_entry, now, progress_state, signature)
+    end
+  end
+
+  defp refresh_workspace_progress_signature(state, issue_id, running_entry, now, progress_state, signature) do
+    case Map.get(running_entry, :workspace_progress_signature) do
+      nil ->
+        updated_running_entry =
+          running_entry
+          |> Map.put(:workspace_progress_signature, signature)
+          |> Map.put_new(:workspace_progress_changed_at, Map.get(running_entry, :started_at))
+          |> Map.put_new(:workspace_progress_tokens, 0)
+
+        {:current, put_running_entry(state, issue_id, updated_running_entry), updated_running_entry, progress_state}
+
+      ^signature ->
+        {:current, state, running_entry, progress_state}
+
+      _previous_signature ->
+        updated_running_entry =
+          running_entry
+          |> Map.put(:workspace_progress_signature, signature)
+          |> Map.put(:workspace_progress_changed_at, now)
+          |> Map.put(:workspace_progress_tokens, Map.get(running_entry, :codex_total_tokens, 0))
+
+        Logger.info("Workspace progress advanced for issue_id=#{issue_id} issue_identifier=#{Map.get(running_entry, :identifier, issue_id)}; resetting no-progress budget")
+
+        {:changed, put_running_entry(state, issue_id, updated_running_entry)}
+    end
+  end
+
+  defp put_running_entry(%State{} = state, issue_id, running_entry) do
+    %{state | running: Map.put(state.running, issue_id, running_entry)}
+  end
+
+  defp git_workspace_progress_snapshot(workspace) when is_binary(workspace) do
+    if File.dir?(workspace) do
+      branch = git_output(workspace, ["branch", "--show-current"]) || "unknown"
+      status = git_output(workspace, ["status", "--porcelain=v1"]) || ""
+      branch_commit_count = git_branch_commit_count(workspace)
+
+      progress_state =
+        cond do
+          branch_commit_count > 0 -> :branch_commits
+          String.trim(status) != "" -> :uncommitted_changes
+          true -> :none
+        end
+
+      signature =
+        :crypto.hash(:sha256, [branch, "\0", Integer.to_string(branch_commit_count), "\0", status])
+        |> Base.encode16(case: :lower)
+
+      %{state: progress_state, signature: signature}
+    else
+      nil
+    end
+  end
+
+  defp git_workspace_progress_snapshot(_workspace), do: nil
 
   defp multiply_positive(value, multiplier) when is_integer(value) and value > 0 and is_integer(multiplier),
     do: value * multiplier
 
   defp multiply_positive(_value, _multiplier), do: 0
 
-  defp git_has_uncommitted_changes?(workspace) do
-    case System.cmd("git", ["-C", workspace, "status", "--porcelain"], stderr_to_stdout: true) do
-      {output, 0} -> String.trim(output) != ""
-      {_output, _status} -> false
+  defp git_output(workspace, args) do
+    case System.cmd("git", ["-C", workspace | args], stderr_to_stdout: true) do
+      {output, 0} -> String.trim_trailing(output)
+      {_output, _status} -> nil
     end
   end
 
-  defp git_has_branch_commits?(workspace) do
+  defp git_branch_commit_count(workspace) do
     base_ref = Config.settings!().workspace.base_ref
 
     case System.cmd("git", ["-C", workspace, "rev-list", "--count", "#{base_ref}..HEAD"], stderr_to_stdout: true) do
       {output, 0} ->
         case Integer.parse(String.trim(output)) do
-          {count, _rest} -> count > 0
-          :error -> false
+          {count, _rest} -> count
+          :error -> 0
         end
 
       {_output, _status} ->
-        false
+        0
     end
   end
 
