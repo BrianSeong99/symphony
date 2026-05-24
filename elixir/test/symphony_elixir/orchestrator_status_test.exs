@@ -952,13 +952,83 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              attempt: 1,
              due_at_ms: due_at_ms,
              identifier: "MT-STALL",
-             error: "stalled for " <> _
+             error: "stalled for " <> _,
+             classification: :no_output_timeout,
+             failure_fingerprint: "no_output_timeout:stalled without codex activity",
+             equivalent_attempt: 1
            } = state.retry_attempts[issue_id]
 
     assert is_integer(due_at_ms)
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
     assert remaining_ms >= 9_500
     assert remaining_ms <= 10_500
+  end
+
+  test "orchestrator blocks repeated equivalent stalls at the retry ceiling" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 1_000
+    )
+
+    issue_id = "issue-stall-limit"
+    orchestrator_name = Module.concat(__MODULE__, :StallLimitOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    failure_fingerprint = "no_output_timeout:stalled without codex activity"
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "MT-STALL-LIMIT",
+      issue: %Issue{id: issue_id, identifier: "MT-STALL-LIMIT", state: "In Progress"},
+      session_id: "thread-stall-limit-turn-stall",
+      last_codex_message: nil,
+      last_codex_timestamp: stale_activity_at,
+      last_codex_event: :notification,
+      last_failure_fingerprint: failure_fingerprint,
+      equivalent_attempt: 3,
+      started_at: stale_activity_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Process.alive?(worker_pid)
+    refute Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.retry_attempts, issue_id)
+
+    assert %{
+             identifier: "MT-STALL-LIMIT",
+             classification: :max_retry_attempts_exceeded,
+             failure_fingerprint: ^failure_fingerprint,
+             equivalent_attempt: 4,
+             error: error
+           } = state.blocked[issue_id]
+
+    assert error =~ "attempt=4"
+    assert error =~ "max=3"
   end
 
   test "orchestrator blocks stalled workers that are waiting on MCP elicitation" do

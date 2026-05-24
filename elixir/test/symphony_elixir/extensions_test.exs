@@ -193,8 +193,10 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
     assert :ok = SymphonyElixir.Tracker.create_comment("issue-1", "comment")
+    assert :ok = SymphonyElixir.Tracker.upsert_run_log_comment("issue-1", "run log")
     assert :ok = SymphonyElixir.Tracker.update_issue_state("issue-1", "Done")
     assert_receive {:memory_tracker_comment, "issue-1", "comment"}
+    assert_receive {:memory_tracker_run_log_upsert, "issue-1", "run log"}
     assert_receive {:memory_tracker_state_update, "issue-1", "Done"}
 
     Application.delete_env(:symphony_elixir, :memory_tracker_recipient)
@@ -243,6 +245,90 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     Process.put({FakeLinearClient, :graphql_result}, :unexpected)
     assert {:error, :comment_create_failed} = Adapter.create_comment("issue-1", "odd")
+    flush_graphql_calls()
+
+    Process.put(
+      {FakeLinearClient, :graphql_results},
+      [
+        {:ok, %{"data" => %{"issue" => %{"comments" => %{"nodes" => []}}}}},
+        {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+      ]
+    )
+
+    assert :ok = Adapter.upsert_run_log_comment("issue-1", "first event")
+    assert_receive {:graphql_called, run_log_lookup_query, %{issueId: "issue-1"}}
+    assert run_log_lookup_query =~ "comments"
+
+    assert_receive {:graphql_called, run_log_create_query, %{body: created_body, issueId: "issue-1"}}
+    assert run_log_create_query =~ "commentCreate"
+    assert created_body =~ "<!-- symphony-run-log -->"
+    assert created_body =~ "first event"
+
+    Process.put(
+      {FakeLinearClient, :graphql_results},
+      [
+        {:ok,
+         %{
+           "data" => %{
+             "issue" => %{
+               "comments" => %{
+                 "nodes" => [
+                   %{"id" => "comment-1", "body" => "<!-- symphony-run-log -->\nexisting event"}
+                 ]
+               }
+             }
+           }
+         }},
+        {:ok, %{"data" => %{"commentUpdate" => %{"success" => true}}}}
+      ]
+    )
+
+    assert :ok = Adapter.upsert_run_log_comment("issue-1", "next event")
+    assert_receive {:graphql_called, _run_log_lookup_query, %{issueId: "issue-1"}}
+
+    assert_receive {:graphql_called, run_log_update_query, %{body: updated_body, commentId: "comment-1"}}
+    assert run_log_update_query =~ "commentUpdate"
+    assert updated_body =~ "existing event"
+    assert updated_body =~ "next event"
+
+    Process.put(
+      {FakeLinearClient, :graphql_results},
+      [
+        {:ok,
+         %{
+           "data" => %{
+             "issue" => %{
+               "comments" => %{
+                 "nodes" => [%{"id" => "comment-old", "body" => "older non-run-log comment"}],
+                 "pageInfo" => %{"hasNextPage" => true, "endCursor" => "cursor-1"}
+               }
+             }
+           }
+         }},
+        {:ok,
+         %{
+           "data" => %{
+             "issue" => %{
+               "comments" => %{
+                 "nodes" => [
+                   %{"id" => "comment-2", "body" => "<!-- symphony-run-log -->\npaginated event"}
+                 ],
+                 "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}
+               }
+             }
+           }
+         }},
+        {:ok, %{"data" => %{"commentUpdate" => %{"success" => true}}}}
+      ]
+    )
+
+    assert :ok = Adapter.upsert_run_log_comment("issue-1", "after page event")
+
+    assert_receive {:graphql_called, _run_log_lookup_query, %{issueId: "issue-1", after: nil}}
+    assert_receive {:graphql_called, _run_log_lookup_query, %{issueId: "issue-1", after: "cursor-1"}}
+    assert_receive {:graphql_called, _run_log_update_query, %{body: paginated_body, commentId: "comment-2"}}
+    assert paginated_body =~ "paginated event"
+    assert paginated_body =~ "after page event"
 
     Process.put(
       {FakeLinearClient, :graphql_results},
@@ -317,6 +403,14 @@ defmodule SymphonyElixir.ExtensionsTest do
     )
 
     assert {:error, :issue_update_failed} = Adapter.update_issue_state("issue-1", "Odd")
+  end
+
+  defp flush_graphql_calls do
+    receive do
+      {:graphql_called, _query, _variables} -> flush_graphql_calls()
+    after
+      0 -> :ok
+    end
   end
 
   test "phoenix observability api preserves state, issue, and refresh responses" do

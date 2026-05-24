@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, RunLog, RunnerObserver, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -166,6 +166,7 @@ defmodule SymphonyElixir.Orchestrator do
 
       running_entry ->
         {updated_running_entry, token_delta} = integrate_codex_update(running_entry, update)
+        maybe_log_codex_progress(issue_id, updated_running_entry, update)
 
         state =
           state
@@ -234,10 +235,16 @@ defmodule SymphonyElixir.Orchestrator do
     Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
 
     next_attempt = next_retry_attempt_from_running(running_entry)
+    classification = RunnerObserver.classify_failure(reason)
+    failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
 
     schedule_issue_retry(state, issue_id, next_attempt, %{
       identifier: running_entry.identifier,
       error: "agent exited: #{inspect(reason)}",
+      classification: classification,
+      failure_fingerprint: failure_fingerprint,
+      equivalent_attempt: equivalent_attempt_from_running(running_entry, failure_fingerprint),
+      suggested_action: RunnerObserver.suggested_action(classification),
       worker_host: Map.get(running_entry, :worker_host),
       workspace_path: Map.get(running_entry, :workspace_path)
     })
@@ -440,7 +447,9 @@ defmodule SymphonyElixir.Orchestrator do
         release_issue_claim(state, issue.id)
 
       active_issue_state?(issue.state, active_states) ->
-        refresh_blocked_issue_state(state, issue)
+        state
+        |> retry_blocked_run_log_writeback(issue.id)
+        |> refresh_blocked_issue_state(issue)
 
       true ->
         Logger.info("Blocked issue moved to non-active state: #{issue_context(issue)} state=#{issue.state}; releasing block")
@@ -600,12 +609,19 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} elapsed_ms=#{elapsed_ms}; restarting with backoff")
 
         next_attempt = next_retry_attempt_from_running(running_entry)
+        classification = :no_output_timeout
+        stable_reason = "stalled without codex activity"
+        failure_fingerprint = RunnerObserver.failure_fingerprint(stable_reason, classification)
 
         state
         |> terminate_running_issue(issue_id, false)
         |> schedule_issue_retry(issue_id, next_attempt, %{
           identifier: identifier,
-          error: "stalled for #{elapsed_ms}ms without codex activity"
+          error: "stalled for #{elapsed_ms}ms without codex activity",
+          classification: classification,
+          failure_fingerprint: failure_fingerprint,
+          suggested_action: RunnerObserver.suggested_action(classification),
+          equivalent_attempt: equivalent_attempt_from_running(running_entry, failure_fingerprint)
         })
       end
     else
@@ -725,6 +741,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp block_issue_from_entry(%State{} = state, issue_id, running_entry, error) do
+    classification = Map.get(running_entry, :classification) || RunnerObserver.classify_failure(error)
+
     blocked_entry = %{
       issue_id: issue_id,
       identifier: Map.get(running_entry, :identifier, issue_id),
@@ -736,8 +754,17 @@ defmodule SymphonyElixir.Orchestrator do
       blocked_at: DateTime.utc_now(),
       last_codex_message: Map.get(running_entry, :last_codex_message),
       last_codex_event: Map.get(running_entry, :last_codex_event),
-      last_codex_timestamp: Map.get(running_entry, :last_codex_timestamp)
+      last_codex_timestamp: Map.get(running_entry, :last_codex_timestamp),
+      classification: classification,
+      failure_fingerprint:
+        Map.get(running_entry, :failure_fingerprint) ||
+          RunnerObserver.failure_fingerprint(error, classification),
+      suggested_action:
+        Map.get(running_entry, :suggested_action) ||
+          RunnerObserver.suggested_action(classification)
     }
+
+    blocked_entry = write_blocked_run_log(blocked_entry)
 
     %{
       state
@@ -910,70 +937,107 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host) do
+  defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host_or_metadata) do
     recipient = self()
+    retry_metadata = dispatch_retry_metadata(preferred_worker_host_or_metadata)
 
-    case select_worker_host(state, preferred_worker_host) do
+    case select_worker_host(state, retry_metadata[:worker_host]) do
       :no_worker_capacity ->
-        Logger.debug("No SSH worker slots available for #{issue_context(issue)} preferred_worker_host=#{inspect(preferred_worker_host)}")
+        Logger.debug("No SSH worker slots available for #{issue_context(issue)} preferred_worker_host=#{inspect(retry_metadata[:worker_host])}")
         state
 
       worker_host ->
-        spawn_issue_on_worker_host(state, issue, attempt, recipient, worker_host)
+        spawn_issue_on_worker_host(state, issue, attempt, recipient, worker_host, retry_metadata)
     end
   end
 
-  defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
-    case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-           AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
-         end) do
-      {:ok, pid} ->
-        ref = Process.monitor(pid)
+  defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host, retry_metadata) do
+    with :ok <-
+           log_run_event(issue, :"build.started", %{
+             role: :builder,
+             attempt: run_attempt_number(attempt),
+             worker_host: worker_host || "local",
+             command_policy: "configured codex command",
+             started_at: DateTime.utc_now()
+           }),
+         {:ok, pid} <-
+           Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
+             AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+           end) do
+      ref = Process.monitor(pid)
 
-        Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
+      Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
 
-        running =
-          Map.put(state.running, issue.id, %{
-            pid: pid,
-            ref: ref,
-            identifier: issue.identifier,
-            issue: issue,
-            worker_host: worker_host,
-            workspace_path: nil,
-            session_id: nil,
-            last_codex_message: nil,
-            last_codex_timestamp: nil,
-            last_codex_event: nil,
-            codex_app_server_pid: nil,
-            codex_input_tokens: 0,
-            codex_output_tokens: 0,
-            codex_total_tokens: 0,
-            codex_last_reported_input_tokens: 0,
-            codex_last_reported_output_tokens: 0,
-            codex_last_reported_total_tokens: 0,
-            turn_count: 0,
-            retry_attempt: normalize_retry_attempt(attempt),
-            started_at: DateTime.utc_now()
-          })
+      running =
+        Map.put(state.running, issue.id, %{
+          pid: pid,
+          ref: ref,
+          identifier: issue.identifier,
+          issue: issue,
+          worker_host: worker_host,
+          workspace_path: nil,
+          session_id: nil,
+          last_codex_message: nil,
+          last_codex_timestamp: nil,
+          last_codex_event: nil,
+          codex_app_server_pid: nil,
+          codex_input_tokens: 0,
+          codex_output_tokens: 0,
+          codex_total_tokens: 0,
+          codex_last_reported_input_tokens: 0,
+          codex_last_reported_output_tokens: 0,
+          codex_last_reported_total_tokens: 0,
+          turn_count: 0,
+          retry_attempt: normalize_retry_attempt(attempt),
+          equivalent_attempt: Map.get(retry_metadata, :equivalent_attempt, normalize_retry_attempt(attempt)),
+          last_failure_fingerprint: Map.get(retry_metadata, :failure_fingerprint),
+          classification: nil,
+          failure_fingerprint: nil,
+          suggested_action: nil,
+          started_at: DateTime.utc_now()
+        })
 
-        %{
-          state
-          | running: running,
-            claimed: MapSet.put(state.claimed, issue.id),
-            retry_attempts: Map.delete(state.retry_attempts, issue.id)
-        }
+      %{
+        state
+        | running: running,
+          claimed: MapSet.put(state.claimed, issue.id),
+          retry_attempts: Map.delete(state.retry_attempts, issue.id)
+      }
+    else
+      {:error, {:linear_writeback_failed, reason}} ->
+        classification = :external_service_failure
+        failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
+
+        block_issue_from_retry_metadata(state, issue.id, %{
+          identifier: issue.identifier,
+          error: "linear writeback failed before build start: #{inspect(reason)}",
+          classification: classification,
+          failure_fingerprint: failure_fingerprint,
+          suggested_action: RunnerObserver.suggested_action(classification),
+          equivalent_attempt: equivalent_attempt_from_retry_metadata(retry_metadata, failure_fingerprint),
+          worker_host: worker_host
+        })
 
       {:error, reason} ->
         Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
         next_attempt = if is_integer(attempt), do: attempt + 1, else: nil
+        classification = RunnerObserver.classify_failure(reason)
+        failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
 
         schedule_issue_retry(state, issue.id, next_attempt, %{
           identifier: issue.identifier,
           error: "failed to spawn agent: #{inspect(reason)}",
+          classification: classification,
+          failure_fingerprint: failure_fingerprint,
+          suggested_action: RunnerObserver.suggested_action(classification),
+          equivalent_attempt: equivalent_attempt_from_retry_metadata(retry_metadata, failure_fingerprint),
           worker_host: worker_host
         })
     end
   end
+
+  defp dispatch_retry_metadata(metadata) when is_map(metadata), do: metadata
+  defp dispatch_retry_metadata(worker_host), do: %{worker_host: worker_host}
 
   defp revalidate_issue_for_dispatch(%Issue{id: issue_id}, issue_fetcher, terminal_states)
        when is_binary(issue_id) and is_function(issue_fetcher, 1) do
@@ -1007,6 +1071,7 @@ defmodule SymphonyElixir.Orchestrator do
        when is_binary(issue_id) and is_map(metadata) do
     previous_retry = Map.get(state.retry_attempts, issue_id, %{attempt: 0})
     next_attempt = if is_integer(attempt), do: attempt, else: previous_retry.attempt + 1
+    max_attempts = Config.settings!().agent.max_retry_attempts
     delay_ms = retry_delay(next_attempt, metadata)
     old_timer = Map.get(previous_retry, :timer_ref)
     retry_token = make_ref()
@@ -1015,29 +1080,99 @@ defmodule SymphonyElixir.Orchestrator do
     error = pick_retry_error(previous_retry, metadata)
     worker_host = pick_retry_worker_host(previous_retry, metadata)
     workspace_path = pick_retry_workspace_path(previous_retry, metadata)
+    classification = pick_retry_classification(previous_retry, metadata, error)
+    failure_fingerprint = pick_retry_failure_fingerprint(previous_retry, metadata, error, classification)
+    suggested_action = pick_retry_suggested_action(previous_retry, metadata, classification)
+    equivalent_attempt = pick_retry_equivalent_attempt(previous_retry, metadata, failure_fingerprint)
 
     if is_reference(old_timer) do
       Process.cancel_timer(old_timer)
     end
 
-    timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
+    retry_entry = %{
+      attempt: next_attempt,
+      timer_ref: nil,
+      retry_token: retry_token,
+      due_at_ms: due_at_ms,
+      identifier: identifier,
+      error: error,
+      worker_host: worker_host,
+      workspace_path: workspace_path,
+      classification: classification,
+      failure_fingerprint: failure_fingerprint,
+      suggested_action: suggested_action,
+      equivalent_attempt: equivalent_attempt
+    }
 
-    error_suffix = if is_binary(error), do: " error=#{error}", else: ""
+    retry_limit_exceeded? = retry_limit_exceeded?(equivalent_attempt, max_attempts, failure_fingerprint)
 
-    Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
+    schedule_or_block_retry(
+      state,
+      issue_id,
+      retry_entry,
+      retry_limit_exceeded?,
+      %{
+        max_attempts: max_attempts,
+        classification: classification,
+        equivalent_attempt: equivalent_attempt,
+        delay_ms: delay_ms,
+        retry_token: retry_token,
+        identifier: identifier,
+        error: error,
+        next_attempt: next_attempt
+      }
+    )
+  end
+
+  defp schedule_or_block_retry(state, issue_id, retry_entry, true, metadata) do
+    block_issue_from_retry_metadata(
+      state,
+      issue_id,
+      %{
+        retry_entry
+        | classification: :max_retry_attempts_exceeded,
+          error:
+            RunnerObserver.retry_limit_error(
+              metadata.equivalent_attempt,
+              metadata.max_attempts,
+              metadata.classification
+            ),
+          suggested_action: RunnerObserver.suggested_action(:max_retry_attempts_exceeded)
+      }
+    )
+  end
+
+  defp schedule_or_block_retry(state, issue_id, retry_entry, false, metadata) do
+    case log_retry_schedule_events(issue_id, retry_entry) do
+      :ok ->
+        put_scheduled_retry(state, issue_id, retry_entry, metadata)
+
+      {:error, {:linear_writeback_failed, reason}} ->
+        block_issue_from_retry_metadata(state, issue_id, %{
+          retry_entry
+          | classification: :external_service_failure,
+            error: "linear writeback failed before retry schedule: #{inspect(reason)}",
+            failure_fingerprint: RunnerObserver.failure_fingerprint(reason, :external_service_failure),
+            suggested_action: RunnerObserver.suggested_action(:external_service_failure)
+        })
+    end
+  end
+
+  defp put_scheduled_retry(state, issue_id, retry_entry, metadata) do
+    timer_ref = Process.send_after(self(), {:retry_issue, issue_id, metadata.retry_token}, metadata.delay_ms)
+    error_suffix = if is_binary(metadata.error), do: " error=#{metadata.error}", else: ""
+
+    Logger.warning(
+      "Retrying issue_id=#{issue_id} issue_identifier=#{metadata.identifier} in #{metadata.delay_ms}ms " <>
+        "(attempt #{metadata.next_attempt})#{error_suffix}"
+    )
 
     %{
       state
       | retry_attempts:
           Map.put(state.retry_attempts, issue_id, %{
-            attempt: next_attempt,
-            timer_ref: timer_ref,
-            retry_token: retry_token,
-            due_at_ms: due_at_ms,
-            identifier: identifier,
-            error: error,
-            worker_host: worker_host,
-            workspace_path: workspace_path
+            retry_entry
+            | timer_ref: timer_ref
           })
     }
   end
@@ -1049,7 +1184,11 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: Map.get(retry_entry, :identifier),
           error: Map.get(retry_entry, :error),
           worker_host: Map.get(retry_entry, :worker_host),
-          workspace_path: Map.get(retry_entry, :workspace_path)
+          workspace_path: Map.get(retry_entry, :workspace_path),
+          classification: Map.get(retry_entry, :classification),
+          failure_fingerprint: Map.get(retry_entry, :failure_fingerprint),
+          suggested_action: Map.get(retry_entry, :suggested_action),
+          equivalent_attempt: Map.get(retry_entry, :equivalent_attempt)
         }
 
         {:ok, attempt, metadata, %{state | retry_attempts: Map.delete(state.retry_attempts, issue_id)}}
@@ -1143,7 +1282,7 @@ defmodule SymphonyElixir.Orchestrator do
     if retry_candidate_issue?(issue, terminal_state_set()) and
          dispatch_slots_available?(issue, state) and
          worker_slots_available?(state, metadata[:worker_host]) do
-      {:noreply, dispatch_issue(state, issue, attempt, metadata[:worker_host])}
+      {:noreply, dispatch_issue(state, issue, attempt, metadata)}
     else
       Logger.debug("No available slots for retrying #{issue_context(issue)}; retrying again")
 
@@ -1151,10 +1290,11 @@ defmodule SymphonyElixir.Orchestrator do
        schedule_issue_retry(
          state,
          issue.id,
-         attempt + 1,
+         attempt,
          Map.merge(metadata, %{
            identifier: issue.identifier,
-           error: "no available orchestrator slots"
+           delay_type: :capacity,
+           error: "waiting for orchestrator capacity"
          })
        )}
     end
@@ -1185,12 +1325,40 @@ defmodule SymphonyElixir.Orchestrator do
   defp normalize_retry_attempt(attempt) when is_integer(attempt) and attempt > 0, do: attempt
   defp normalize_retry_attempt(_attempt), do: 0
 
+  defp run_attempt_number(attempt) do
+    case normalize_retry_attempt(attempt) do
+      0 -> 1
+      attempt -> attempt
+    end
+  end
+
   defp next_retry_attempt_from_running(running_entry) do
     case Map.get(running_entry, :retry_attempt) do
       attempt when is_integer(attempt) and attempt > 0 -> attempt + 1
       _ -> nil
     end
   end
+
+  defp equivalent_attempt_from_running(running_entry, failure_fingerprint) when is_binary(failure_fingerprint) do
+    if Map.get(running_entry, :last_failure_fingerprint) == failure_fingerprint do
+      Map.get(running_entry, :equivalent_attempt, 0) + 1
+    else
+      1
+    end
+  end
+
+  defp equivalent_attempt_from_running(_running_entry, _failure_fingerprint), do: 0
+
+  defp equivalent_attempt_from_retry_metadata(metadata, failure_fingerprint)
+       when is_map(metadata) and is_binary(failure_fingerprint) do
+    if metadata[:failure_fingerprint] == failure_fingerprint do
+      Map.get(metadata, :equivalent_attempt, 0) + 1
+    else
+      1
+    end
+  end
+
+  defp equivalent_attempt_from_retry_metadata(_metadata, _failure_fingerprint), do: 0
 
   defp pick_retry_identifier(issue_id, previous_retry, metadata) do
     metadata[:identifier] || Map.get(previous_retry, :identifier) || issue_id
@@ -1206,6 +1374,171 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp pick_retry_workspace_path(previous_retry, metadata) do
     metadata[:workspace_path] || Map.get(previous_retry, :workspace_path)
+  end
+
+  defp pick_retry_classification(previous_retry, metadata, error) do
+    cond do
+      metadata[:delay_type] in [:continuation, :capacity] ->
+        nil
+
+      metadata[:classification] ->
+        metadata[:classification]
+
+      Map.get(previous_retry, :classification) ->
+        Map.get(previous_retry, :classification)
+
+      is_binary(error) ->
+        RunnerObserver.classify_retry_error(error) || RunnerObserver.classify_failure(error)
+
+      true ->
+        RunnerObserver.classify_failure(metadata)
+    end
+  end
+
+  defp pick_retry_failure_fingerprint(previous_retry, metadata, error, classification) do
+    cond do
+      metadata[:delay_type] == :capacity ->
+        metadata[:failure_fingerprint] || Map.get(previous_retry, :failure_fingerprint)
+
+      is_nil(classification) ->
+        nil
+
+      metadata[:failure_fingerprint] ->
+        metadata[:failure_fingerprint]
+
+      Map.get(previous_retry, :failure_fingerprint) ->
+        Map.get(previous_retry, :failure_fingerprint)
+
+      true ->
+        RunnerObserver.failure_fingerprint(error || metadata, classification)
+    end
+  end
+
+  defp pick_retry_suggested_action(previous_retry, metadata, classification) do
+    cond do
+      metadata[:delay_type] == :capacity ->
+        metadata[:suggested_action] || Map.get(previous_retry, :suggested_action)
+
+      is_nil(classification) ->
+        nil
+
+      metadata[:suggested_action] ->
+        metadata[:suggested_action]
+
+      Map.get(previous_retry, :suggested_action) ->
+        Map.get(previous_retry, :suggested_action)
+
+      true ->
+        RunnerObserver.suggested_action(classification)
+    end
+  end
+
+  defp pick_retry_equivalent_attempt(_previous_retry, %{equivalent_attempt: attempt}, _failure_fingerprint)
+       when is_integer(attempt) and attempt > 0,
+       do: attempt
+
+  defp pick_retry_equivalent_attempt(_previous_retry, _metadata, nil), do: 0
+
+  defp pick_retry_equivalent_attempt(previous_retry, _metadata, failure_fingerprint) do
+    if Map.get(previous_retry, :failure_fingerprint) == failure_fingerprint do
+      Map.get(previous_retry, :equivalent_attempt, Map.get(previous_retry, :attempt, 0)) + 1
+    else
+      1
+    end
+  end
+
+  defp retry_limit_exceeded?(equivalent_attempt, max_attempts, failure_fingerprint)
+       when is_integer(equivalent_attempt) and is_binary(failure_fingerprint) do
+    RunnerObserver.max_retry_attempts_exceeded?(equivalent_attempt, max_attempts)
+  end
+
+  defp retry_limit_exceeded?(_equivalent_attempt, _max_attempts, _failure_fingerprint), do: false
+
+  defp block_issue_from_retry_metadata(%State{} = state, issue_id, metadata)
+       when is_binary(issue_id) and is_map(metadata) do
+    classification = metadata[:classification] || RunnerObserver.classify_failure(metadata[:error] || metadata)
+
+    blocked_entry = %{
+      issue_id: issue_id,
+      identifier: metadata[:identifier] || issue_id,
+      issue: metadata[:issue],
+      worker_host: metadata[:worker_host],
+      workspace_path: metadata[:workspace_path],
+      session_id: metadata[:session_id],
+      error: metadata[:error],
+      blocked_at: DateTime.utc_now(),
+      last_codex_message: metadata[:last_codex_message],
+      last_codex_event: metadata[:last_codex_event],
+      last_codex_timestamp: metadata[:last_codex_timestamp],
+      classification: classification,
+      failure_fingerprint:
+        metadata[:failure_fingerprint] ||
+          RunnerObserver.failure_fingerprint(metadata[:error] || metadata, classification),
+      equivalent_attempt: metadata[:equivalent_attempt],
+      suggested_action: metadata[:suggested_action] || RunnerObserver.suggested_action(classification)
+    }
+
+    blocked_entry = write_blocked_run_log(blocked_entry)
+
+    %{
+      state
+      | running: Map.delete(state.running, issue_id),
+        retry_attempts: Map.delete(state.retry_attempts, issue_id),
+        claimed: MapSet.put(state.claimed, issue_id),
+        blocked: Map.put(state.blocked, issue_id, blocked_entry)
+    }
+  end
+
+  defp retry_blocked_run_log_writeback(%State{} = state, issue_id) when is_binary(issue_id) do
+    case Map.get(state.blocked, issue_id) do
+      %{run_log_writeback_status: :failed} = blocked_entry ->
+        %{state | blocked: Map.put(state.blocked, issue_id, write_blocked_run_log(blocked_entry))}
+
+      _ ->
+        state
+    end
+  end
+
+  defp write_blocked_run_log(%{issue_id: issue_id} = blocked_entry) when is_binary(issue_id) do
+    blocked_entry
+    |> Map.drop([:run_log_writeback_status, :run_log_writeback_error, :run_log_writeback_failed_at])
+    |> then(fn log_entry ->
+      case log_run_event(issue_id, :"retry.blocked", log_entry) do
+        :ok ->
+          log_entry
+
+        {:error, {:linear_writeback_failed, reason}} ->
+          Logger.error("Blocked issue evidence writeback failed: issue_id=#{issue_id} reason=#{inspect(reason)}")
+
+          log_entry
+          |> Map.put(:run_log_writeback_status, :failed)
+          |> Map.put(:run_log_writeback_error, inspect(reason))
+          |> Map.put(:run_log_writeback_failed_at, DateTime.utc_now())
+      end
+    end)
+  end
+
+  defp log_retry_schedule_events(issue_id, retry_entry) do
+    case retry_entry[:classification] do
+      nil ->
+        log_run_event(issue_id, :"retry.scheduled", retry_entry)
+
+      :unknown_failure ->
+        log_run_event(issue_id, :"retry.scheduled", retry_entry)
+
+      _classification ->
+        case log_run_event(issue_id, :"runner.classified_failure", retry_entry) do
+          :ok -> log_run_event(issue_id, :"retry.scheduled", retry_entry)
+          error -> error
+        end
+    end
+  end
+
+  defp log_run_event(issue_or_id, event, attrs) do
+    case RunLog.log(issue_or_id, event, attrs) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:linear_writeback_failed, reason}}
+    end
   end
 
   defp maybe_put_runtime_value(running_entry, _key, nil), do: running_entry
@@ -1366,6 +1699,9 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_timestamp: metadata.last_codex_timestamp,
           last_codex_message: metadata.last_codex_message,
           last_codex_event: metadata.last_codex_event,
+          classification: Map.get(metadata, :classification),
+          failure_fingerprint: Map.get(metadata, :failure_fingerprint),
+          suggested_action: Map.get(metadata, :suggested_action),
           runtime_seconds: running_seconds(metadata.started_at, now)
         }
       end)
@@ -1379,6 +1715,9 @@ defmodule SymphonyElixir.Orchestrator do
           due_in_ms: max(0, due_at_ms - now_ms),
           identifier: Map.get(retry, :identifier),
           error: Map.get(retry, :error),
+          classification: Map.get(retry, :classification),
+          failure_fingerprint: Map.get(retry, :failure_fingerprint),
+          suggested_action: Map.get(retry, :suggested_action),
           worker_host: Map.get(retry, :worker_host),
           workspace_path: Map.get(retry, :workspace_path)
         }
@@ -1395,6 +1734,12 @@ defmodule SymphonyElixir.Orchestrator do
           workspace_path: Map.get(metadata, :workspace_path),
           session_id: Map.get(metadata, :session_id),
           error: Map.get(metadata, :error),
+          classification: Map.get(metadata, :classification),
+          failure_fingerprint: Map.get(metadata, :failure_fingerprint),
+          suggested_action: Map.get(metadata, :suggested_action),
+          run_log_writeback_status: Map.get(metadata, :run_log_writeback_status),
+          run_log_writeback_error: Map.get(metadata, :run_log_writeback_error),
+          run_log_writeback_failed_at: Map.get(metadata, :run_log_writeback_failed_at),
           blocked_at: Map.get(metadata, :blocked_at),
           last_codex_timestamp: Map.get(metadata, :last_codex_timestamp),
           last_codex_message: Map.get(metadata, :last_codex_message),
@@ -1445,6 +1790,9 @@ defmodule SymphonyElixir.Orchestrator do
     last_reported_output = Map.get(running_entry, :codex_last_reported_output_tokens, 0)
     last_reported_total = Map.get(running_entry, :codex_last_reported_total_tokens, 0)
     turn_count = Map.get(running_entry, :turn_count, 0)
+    classification = RunnerObserver.classify_event(event, update[:payload] || update[:raw])
+    existing_classification = Map.get(running_entry, :classification)
+    effective_classification = classification || existing_classification
 
     {
       Map.merge(running_entry, %{
@@ -1459,10 +1807,65 @@ defmodule SymphonyElixir.Orchestrator do
         codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
-        turn_count: turn_count_for_update(turn_count, running_entry.session_id, update)
+        turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
+        classification: effective_classification,
+        failure_fingerprint: failure_fingerprint_for_update(running_entry, update, effective_classification),
+        suggested_action: suggested_action_for_update(running_entry, classification, effective_classification)
       }),
       token_delta
     }
+  end
+
+  defp suggested_action_for_update(_running_entry, classification, _effective_classification)
+       when not is_nil(classification) do
+    RunnerObserver.suggested_action(classification)
+  end
+
+  defp suggested_action_for_update(running_entry, _classification, effective_classification)
+       when not is_nil(effective_classification) do
+    Map.get(running_entry, :suggested_action) || RunnerObserver.suggested_action(effective_classification)
+  end
+
+  defp suggested_action_for_update(_running_entry, _classification, _effective_classification), do: nil
+
+  defp maybe_log_codex_progress(issue_id, running_entry, %{event: :session_started} = update) do
+    log_run_event(issue_id, :"build.progress", %{
+      identifier: running_entry.identifier,
+      role: :builder,
+      session_id: Map.get(update, :session_id),
+      pid: Map.get(running_entry, :codex_app_server_pid),
+      worktree: Map.get(running_entry, :workspace_path),
+      last_event: :session_started,
+      last_event_at: Map.get(update, :timestamp)
+    })
+  end
+
+  defp maybe_log_codex_progress(issue_id, running_entry, %{event: event} = update) do
+    case RunnerObserver.classify_event(event, update[:payload] || update[:raw]) do
+      nil ->
+        :ok
+
+      classification ->
+        log_run_event(issue_id, :"runner.classified_failure", %{
+          identifier: running_entry.identifier,
+          role: :builder,
+          session_id: Map.get(running_entry, :session_id),
+          pid: Map.get(running_entry, :codex_app_server_pid),
+          worktree: Map.get(running_entry, :workspace_path),
+          last_event: event,
+          classification: classification,
+          failure_fingerprint: RunnerObserver.failure_fingerprint(update, classification),
+          suggested_action: RunnerObserver.suggested_action(classification)
+        })
+    end
+  end
+
+  defp maybe_log_codex_progress(_issue_id, _running_entry, _update), do: :ok
+
+  defp failure_fingerprint_for_update(running_entry, _update, nil), do: Map.get(running_entry, :failure_fingerprint)
+
+  defp failure_fingerprint_for_update(running_entry, update, classification) do
+    Map.get(running_entry, :failure_fingerprint) || RunnerObserver.failure_fingerprint(update, classification)
   end
 
   defp codex_app_server_pid_for_update(_existing, %{codex_app_server_pid: pid})

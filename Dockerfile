@@ -1,6 +1,6 @@
 FROM elixir:1.19-alpine
 
-RUN apk add --no-cache build-base curl git postgresql-client
+RUN apk add --no-cache bash build-base curl git github-cli openssh-client postgresql-client
 
 WORKDIR /app/elixir
 

@@ -1,0 +1,94 @@
+defmodule SymphonyElixir.RunnerObserverTest do
+  use SymphonyElixir.TestSupport
+
+  alias SymphonyElixir.RunLog
+  alias SymphonyElixir.RunnerObserver
+
+  test "classifies missing tools, stale output, auth failures, and validation mismatch" do
+    assert RunnerObserver.classify_failure(:bash_not_found) == :missing_tool
+    assert RunnerObserver.classify_failure("stalled for 301000ms without codex activity") == :no_output_timeout
+    assert RunnerObserver.classify_failure("403 forbidden from Linear") == :auth_failure
+    assert RunnerObserver.classify_failure("acceptance criteria mismatch after validation") == :requirements_mismatch
+  end
+
+  test "preserves preflight classifications through wrapped worker failures" do
+    failure = %{
+      classification: :missing_tool,
+      reason: "missing required runner tool(s): codex",
+      missing_tools: ["codex"]
+    }
+
+    assert RunnerObserver.classify_failure({:preflight_failed, failure}) == :missing_tool
+    assert RunnerObserver.classify_failure(%{"classification" => "missing_tool"}) == :missing_tool
+  end
+
+  test "does not classify normal json payload text as a stream failure" do
+    refute RunnerObserver.classify_event(:session_started, %{jsonrpc: "2.0", path: "package.json"})
+    assert RunnerObserver.classify_event(:stderr, "invalid json from app-server stream") == :no_json_event_timeout
+  end
+
+  test "preflight reports missing command tools with deterministic evidence" do
+    assert {:error,
+            %{
+              classification: :missing_tool,
+              missing_tools: ["definitely-missing-symphony-tool"],
+              failure_fingerprint: fingerprint,
+              suggested_action: suggested_action
+            }} =
+             RunnerObserver.preflight("definitely-missing-symphony-tool app-server", shell: "sh")
+
+    assert fingerprint =~ "missing_tool"
+    assert suggested_action =~ "missing toolchain"
+  end
+
+  test "preflight preserves commands that require shell expansion" do
+    assert :ok = RunnerObserver.preflight("$CODEX_BIN app-server", shell: "sh")
+    assert :ok = RunnerObserver.preflight("./bin/codex app-server", shell: "sh")
+    assert :ok = RunnerObserver.preflight("source ~/.nvm/nvm.sh && codex app-server", shell: "sh")
+    assert :ok = RunnerObserver.preflight("CODEX_BIN=codex $CODEX_BIN app-server", shell: "sh")
+  end
+
+  test "preflight resolves simple commands through the configured launch shell" do
+    previous_path = System.get_env("PATH")
+    shell_dir = Path.join(System.tmp_dir!(), "symphony-shell-#{System.unique_integer([:positive])}")
+    shell_path = Path.join(shell_dir, "symphony-test-shell")
+
+    File.mkdir_p!(shell_dir)
+
+    File.write!(shell_path, """
+    #!/bin/sh
+    case "$*" in
+      *"command -v shell-only-tool"*) exit 0 ;;
+      *) exec /bin/sh "$@" ;;
+    esac
+    """)
+
+    File.chmod!(shell_path, 0o755)
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      File.rm_rf(shell_dir)
+    end)
+
+    System.put_env("PATH", shell_dir <> ":" <> (previous_path || ""))
+
+    assert System.find_executable("shell-only-tool") == nil
+    assert :ok = RunnerObserver.preflight("shell-only-tool app-server", shell: "symphony-test-shell")
+  end
+
+  test "retry ceiling helper blocks attempt four when default max is three" do
+    refute RunnerObserver.max_retry_attempts_exceeded?(3, 3)
+    assert RunnerObserver.max_retry_attempts_exceeded?(4, 3)
+
+    assert RunnerObserver.retry_limit_error(4, 3, :missing_tool) ==
+             "max retry attempts exceeded: attempt=4 max=3 classification=missing_tool"
+  end
+
+  test "run log surfaces tracker writeback failures" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    Application.put_env(:symphony_elixir, :memory_tracker_comment_result, {:error, :linear_unavailable})
+
+    assert {:error, :linear_unavailable} =
+             RunLog.log("issue-run-log", :"retry.scheduled", %{identifier: "LAB-TEST"})
+  end
+end
