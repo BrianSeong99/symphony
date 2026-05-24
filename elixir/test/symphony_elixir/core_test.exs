@@ -913,7 +913,7 @@ defmodule SymphonyElixir.CoreTest do
     orchestrator_name = Module.concat(__MODULE__, :CapacityRetryOrchestrator)
     {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
-    Process.sleep(100)
+    Process.sleep(300)
 
     worker_pid =
       spawn(fn ->
@@ -1124,6 +1124,48 @@ defmodule SymphonyElixir.CoreTest do
     assert rate_limit.reason == "linear_api_rate_limited"
     assert rate_limit.remaining_ms > 0
     assert polling.next_poll_in_ms > 0
+  end
+
+  test "build-start writeback rate limits pause polling and retry instead of blocking the issue" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      poll_interval_ms: 30_000
+    )
+
+    issue_id = "issue-writeback-rate-limit"
+    issue = %Issue{id: issue_id, identifier: "LAB-WRITEBACK-RATE", title: "Writeback rate", state: "Todo"}
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+
+    Application.put_env(
+      :symphony_elixir,
+      :memory_tracker_comment_result,
+      {:error, {:linear_api_rate_limited, 3_600_000}}
+    )
+
+    assert {:ok, [%Issue{id: ^issue_id}]} = Tracker.fetch_candidate_issues()
+
+    orchestrator_name = Module.concat(__MODULE__, :BuildStartWritebackRateLimitOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    {:noreply, state} = Orchestrator.handle_info(:run_poll_cycle, :sys.get_state(pid))
+
+    assert %{
+             reason: "linear_api_rate_limited",
+             duration_ms: 3_600_000
+           } = state.tracker_rate_limit
+
+    assert %{attempt: 1, error: "linear writeback rate limited before build start", classification: nil} =
+             state.retry_attempts[issue_id]
+
+    refute Map.has_key?(state.blocked, issue_id)
+    refute_receive {:memory_tracker_run_log_upsert, ^issue_id, _body}, 50
   end
 
   test "select_worker_host_for_test skips full ssh hosts under the shared per-host cap" do

@@ -1557,18 +1557,7 @@ defmodule SymphonyElixir.Orchestrator do
       }
     else
       {:error, {:linear_writeback_failed, reason}} ->
-        classification = :external_service_failure
-        failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
-
-        block_issue_from_retry_metadata(state, issue.id, %{
-          identifier: issue.identifier,
-          error: "linear writeback failed before build start: #{inspect(reason)}",
-          classification: classification,
-          failure_fingerprint: failure_fingerprint,
-          suggested_action: RunnerObserver.suggested_action(classification),
-          equivalent_attempt: equivalent_attempt_from_retry_metadata(retry_metadata, failure_fingerprint),
-          worker_host: worker_host
-        })
+        handle_build_start_writeback_failure(state, issue, attempt, retry_metadata, worker_host, reason)
 
       {:error, reason} ->
         Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
@@ -1590,6 +1579,36 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp dispatch_retry_metadata(metadata) when is_map(metadata), do: metadata
   defp dispatch_retry_metadata(worker_host), do: %{worker_host: worker_host}
+
+  defp handle_build_start_writeback_failure(state, issue, attempt, retry_metadata, worker_host, {:linear_api_rate_limited, duration_ms})
+       when is_integer(duration_ms) and duration_ms > 0 do
+    state
+    |> apply_tracker_rate_limit(duration_ms)
+    |> schedule_issue_retry(issue.id, run_attempt_number(attempt), %{
+      identifier: issue.identifier,
+      delay_ms: duration_ms,
+      delay_type: :provider_backoff,
+      error: "linear writeback rate limited before build start",
+      skip_run_log?: true,
+      worker_host: worker_host,
+      workspace_path: Map.get(retry_metadata, :workspace_path)
+    })
+  end
+
+  defp handle_build_start_writeback_failure(state, issue, _attempt, retry_metadata, worker_host, reason) do
+    classification = :external_service_failure
+    failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
+
+    block_issue_from_retry_metadata(state, issue.id, %{
+      identifier: issue.identifier,
+      error: "linear writeback failed before build start: #{inspect(reason)}",
+      classification: classification,
+      failure_fingerprint: failure_fingerprint,
+      suggested_action: RunnerObserver.suggested_action(classification),
+      equivalent_attempt: equivalent_attempt_from_retry_metadata(retry_metadata, failure_fingerprint),
+      worker_host: worker_host
+    })
+  end
 
   defp revalidate_issue_for_dispatch(%Issue{id: issue_id}, issue_fetcher, terminal_states)
        when is_binary(issue_id) and is_function(issue_fetcher, 1) do
@@ -1708,9 +1727,26 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp schedule_or_block_retry(state, issue_id, retry_entry, false, metadata) do
+    if metadata[:skip_run_log?] do
+      put_scheduled_retry(state, issue_id, retry_entry, metadata)
+    else
+      schedule_retry_with_run_log(state, issue_id, retry_entry, metadata)
+    end
+  end
+
+  defp schedule_retry_with_run_log(state, issue_id, retry_entry, metadata) do
     case log_retry_schedule_events(issue_id, retry_entry) do
       :ok ->
         put_scheduled_retry(state, issue_id, retry_entry, metadata)
+
+      {:error, {:linear_writeback_failed, {:linear_api_rate_limited, duration_ms}}}
+      when is_integer(duration_ms) and duration_ms > 0 ->
+        retry_entry = %{retry_entry | due_at_ms: System.monotonic_time(:millisecond) + duration_ms}
+        metadata = %{metadata | delay_ms: duration_ms}
+
+        state
+        |> apply_tracker_rate_limit(duration_ms)
+        |> put_scheduled_retry(issue_id, retry_entry, metadata)
 
       {:error, {:linear_writeback_failed, reason}} ->
         block_issue_from_retry_metadata(state, issue_id, %{
@@ -1875,10 +1911,15 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp retry_delay(attempt, metadata) when is_integer(attempt) and attempt > 0 and is_map(metadata) do
-    if metadata[:delay_type] == :continuation and attempt == 1 do
-      @continuation_retry_delay_ms
-    else
-      failure_retry_delay(attempt)
+    cond do
+      is_integer(metadata[:delay_ms]) and metadata[:delay_ms] > 0 ->
+        metadata[:delay_ms]
+
+      metadata[:delay_type] == :continuation and attempt == 1 ->
+        @continuation_retry_delay_ms
+
+      true ->
+        failure_retry_delay(attempt)
     end
   end
 
@@ -1943,7 +1984,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp pick_retry_classification(previous_retry, metadata, error) do
     cond do
-      metadata[:delay_type] in [:continuation, :capacity] ->
+      metadata[:delay_type] in [:continuation, :capacity, :provider_backoff] ->
         nil
 
       metadata[:classification] ->
