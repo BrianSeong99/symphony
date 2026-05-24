@@ -8,6 +8,7 @@ defmodule SymphonyElixir.Linear.Adapter do
   alias SymphonyElixir.Linear.Client
 
   @run_log_marker "<!-- symphony-run-log -->"
+  @max_run_log_comment_bytes 40_000
 
   @create_comment_mutation """
   mutation SymphonyCreateComment($issueId: String!, $body: String!) {
@@ -90,7 +91,7 @@ defmodule SymphonyElixir.Linear.Adapter do
     with {:ok, existing_comment} <- find_run_log_comment(issue_id) do
       case existing_comment do
         %{id: comment_id, body: existing_body} when is_binary(comment_id) ->
-          update_comment(comment_id, append_run_log_body(existing_body, body))
+          upsert_existing_run_log_comment(issue_id, comment_id, existing_body, body)
 
         nil ->
           create_comment(issue_id, initial_run_log_body(body))
@@ -166,11 +167,31 @@ defmodule SymphonyElixir.Linear.Adapter do
   defp find_run_log_marker(nodes) do
     Enum.find_value(nodes, fn
       %{"id" => id, "body" => body} when is_binary(id) and is_binary(body) ->
-        if String.contains?(body, @run_log_marker), do: %{id: id, body: body}
+        if String.contains?(body, @run_log_marker) and reusable_run_log_body?(body) do
+          %{id: id, body: body}
+        end
 
       _ ->
         nil
     end)
+  end
+
+  defp reusable_run_log_body?(body) when is_binary(body) do
+    byte_size(body) < @max_run_log_comment_bytes
+  end
+
+  defp upsert_existing_run_log_comment(issue_id, comment_id, existing_body, body) do
+    next_body = append_run_log_body(existing_body, body)
+
+    if reusable_run_log_body?(next_body) do
+      case update_comment(comment_id, next_body) do
+        :ok -> :ok
+        {:error, :comment_update_failed} -> create_comment(issue_id, continued_run_log_body(body))
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      create_comment(issue_id, continued_run_log_body(body))
+    end
   end
 
   defp update_comment(comment_id, body) do
@@ -187,6 +208,10 @@ defmodule SymphonyElixir.Linear.Adapter do
 
   defp initial_run_log_body(body) do
     Enum.join([@run_log_marker, "### Symphony run log", "", body], "\n")
+  end
+
+  defp continued_run_log_body(body) do
+    Enum.join([@run_log_marker, "### Symphony run log continued", "", body], "\n")
   end
 
   defp append_run_log_body(existing_body, body) when is_binary(existing_body) do

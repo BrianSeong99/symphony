@@ -299,6 +299,60 @@ defmodule SymphonyElixir.ExtensionsTest do
            "data" => %{
              "issue" => %{
                "comments" => %{
+                 "nodes" => [
+                   %{"id" => "comment-large", "body" => "<!-- symphony-run-log -->\n" <> String.duplicate("x", 45_000)}
+                 ]
+               }
+             }
+           }
+         }},
+        {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+      ]
+    )
+
+    assert :ok = Adapter.upsert_run_log_comment("issue-1", "rolled over event")
+    assert_receive {:graphql_called, _run_log_lookup_query, %{issueId: "issue-1"}}
+    assert_receive {:graphql_called, rollover_create_query, %{body: rollover_body, issueId: "issue-1"}}
+    assert rollover_create_query =~ "commentCreate"
+    assert rollover_body =~ "<!-- symphony-run-log -->"
+    assert rollover_body =~ "rolled over event"
+
+    Process.put(
+      {FakeLinearClient, :graphql_results},
+      [
+        {:ok,
+         %{
+           "data" => %{
+             "issue" => %{
+               "comments" => %{
+                 "nodes" => [
+                   %{"id" => "comment-update-fails", "body" => "<!-- symphony-run-log -->\nsmall event"}
+                 ]
+               }
+             }
+           }
+         }},
+        {:ok, %{"data" => %{"commentUpdate" => %{"success" => false}}}},
+        {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+      ]
+    )
+
+    assert :ok = Adapter.upsert_run_log_comment("issue-1", "fallback event")
+    assert_receive {:graphql_called, _run_log_lookup_query, %{issueId: "issue-1"}}
+    assert_receive {:graphql_called, failed_update_query, %{commentId: "comment-update-fails"}}
+    assert failed_update_query =~ "commentUpdate"
+    assert_receive {:graphql_called, fallback_create_query, %{body: fallback_body, issueId: "issue-1"}}
+    assert fallback_create_query =~ "commentCreate"
+    assert fallback_body =~ "fallback event"
+
+    Process.put(
+      {FakeLinearClient, :graphql_results},
+      [
+        {:ok,
+         %{
+           "data" => %{
+             "issue" => %{
+               "comments" => %{
                  "nodes" => [%{"id" => "comment-old", "body" => "older non-run-log comment"}],
                  "pageInfo" => %{"hasNextPage" => true, "endCursor" => "cursor-1"}
                }
