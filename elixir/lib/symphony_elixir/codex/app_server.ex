@@ -200,8 +200,10 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp start_port(workspace, worker_host) when is_binary(worker_host) do
-    remote_command = remote_launch_command(workspace)
-    SSH.start_port(worker_host, remote_command, line: @port_line_bytes)
+    with :ok <- remote_preflight(worker_host) do
+      remote_command = remote_launch_command(workspace)
+      SSH.start_port(worker_host, remote_command, line: @port_line_bytes)
+    end
   end
 
   defp open_local_port(workspace) do
@@ -213,7 +215,7 @@ defmodule SymphonyElixir.Codex.AppServer do
         :binary,
         :exit_status,
         :stderr_to_stdout,
-        args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
+        args: [~c"-lc", String.to_charlist(wrapped_codex_command())],
         cd: String.to_charlist(workspace),
         line: @port_line_bytes
       ]
@@ -223,10 +225,149 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp remote_launch_command(workspace) when is_binary(workspace) do
     [
       "cd #{shell_escape(workspace)}",
-      "exec #{Config.settings!().codex.command}"
+      wrapped_codex_command()
     ]
     |> Enum.join(" && ")
   end
+
+  defp wrapped_codex_command do
+    [
+      Config.settings!().codex.command,
+      "status=$?",
+      "printf '\\n'",
+      "exit $status"
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp remote_preflight(worker_host) when is_binary(worker_host) do
+    command = Config.settings!().codex.command
+
+    with {:ok, executable} <- preflight_executable(command),
+         {:ok, {output, status}} <- SSH.run(worker_host, remote_preflight_command(executable), stderr_to_stdout: true) do
+      if status == 0 do
+        :ok
+      else
+        {:error, {:preflight_failed, preflight_failure(output, executable)}}
+      end
+    else
+      :skip -> :ok
+      {:error, :ssh_not_found} -> {:error, {:preflight_failed, preflight_failure("missing required runner tool(s): ssh", "ssh")}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp preflight_executable(command) when is_binary(command) do
+    trimmed = String.trim(command)
+
+    cond do
+      trimmed == "" ->
+        {:ok, ""}
+
+      shell_command?(trimmed) ->
+        :skip
+
+      true ->
+        trimmed
+        |> String.split(~r/\s+/, parts: 2)
+        |> List.first()
+        |> normalize_preflight_executable()
+    end
+  end
+
+  defp preflight_executable(_command), do: {:ok, ""}
+
+  defp normalize_preflight_executable(nil), do: {:ok, ""}
+  defp normalize_preflight_executable(""), do: {:ok, ""}
+
+  defp normalize_preflight_executable(command) do
+    executable =
+      command
+      |> String.trim_leading("'")
+      |> String.trim_leading("\"")
+      |> String.trim_trailing("'")
+      |> String.trim_trailing("\"")
+
+    if literal_preflight_executable?(executable) do
+      {:ok, executable}
+    else
+      :skip
+    end
+  end
+
+  defp literal_preflight_executable?(command) when is_binary(command) do
+    cond do
+      command == "" -> false
+      String.contains?(command, ["$", "`", "~", "\n", "\r", <<0>>]) -> false
+      String.starts_with?(command, "/") -> true
+      String.match?(command, ~r/^[A-Za-z0-9_.-]+$/) -> true
+      true -> false
+    end
+  end
+
+  defp remote_preflight_command(executable) when is_binary(executable) do
+    marker = "__SYMPHONY_PREFLIGHT_MISSING_TOOL__"
+
+    [
+      "command -v #{shell_escape(executable)} >/dev/null 2>&1",
+      "||",
+      "{ printf '%s\\n' #{shell_escape("#{marker}:#{executable}")}; exit 127; }"
+    ]
+    |> Enum.join(" ")
+  end
+
+  defp preflight_failure(output, executable) do
+    reason = preflight_reason(output, executable)
+    classification = RunnerObserver.classify_failure(reason)
+
+    %{
+      classification: classification,
+      reason: reason,
+      missing_tools: preflight_missing_tools(classification, output, executable),
+      failure_fingerprint: RunnerObserver.failure_fingerprint(reason, classification),
+      suggested_action: RunnerObserver.suggested_action(classification)
+    }
+  end
+
+  defp preflight_reason(output, executable) do
+    normalized_output =
+      output
+      |> to_string()
+      |> String.trim()
+
+    cond do
+      normalized_output == "" ->
+        "runner preflight failed for #{executable}"
+
+      String.contains?(normalized_output, "__SYMPHONY_PREFLIGHT_MISSING_TOOL__:") ->
+        "missing required runner tool(s): #{executable}"
+
+      true ->
+        String.slice(normalized_output, 0, @max_stream_log_bytes)
+    end
+  end
+
+  defp preflight_missing_tools(:missing_tool, output, executable) do
+    if String.contains?(to_string(output), "__SYMPHONY_PREFLIGHT_MISSING_TOOL__:") do
+      [executable]
+    else
+      []
+    end
+  end
+
+  defp preflight_missing_tools(_classification, _output, _executable), do: []
+
+  defp shell_command?(command) when is_binary(command) do
+    String.contains?(command, ["&&", "||", ";", "|", "<", ">", "\n", "\r"]) or
+      command
+      |> String.split(~r/\s+/, parts: 2)
+      |> List.first()
+      |> shell_leading_token?()
+  end
+
+  defp shell_leading_token?(token) when token in ["source", ".", "cd", "export", "eval", "exec", "alias", "ulimit"], do: true
+  defp shell_leading_token?(token) when is_binary(token), do: String.contains?(token, ["=", "~", "$", "`"])
+  defp shell_leading_token?(_token), do: true
 
   defp port_metadata(port, worker_host) when is_port(port) do
     base_metadata =
@@ -338,16 +479,17 @@ defmodule SymphonyElixir.Codex.AppServer do
       on_message,
       Config.settings!().codex.turn_timeout_ms,
       "",
+      "",
       tool_executor,
       auto_approve_requests
     )
   end
 
-  defp receive_loop(port, on_message, timeout_ms, pending_line, tool_executor, auto_approve_requests) do
+  defp receive_loop(port, on_message, timeout_ms, pending_line, raw_output, tool_executor, auto_approve_requests) do
     receive do
       {^port, {:data, {:eol, chunk}}} ->
         complete_line = pending_line <> to_string(chunk)
-        handle_incoming(port, on_message, complete_line, timeout_ms, tool_executor, auto_approve_requests)
+        handle_incoming(port, on_message, complete_line, timeout_ms, raw_output, tool_executor, auto_approve_requests)
 
       {^port, {:data, {:noeol, chunk}}} ->
         receive_loop(
@@ -355,19 +497,20 @@ defmodule SymphonyElixir.Codex.AppServer do
           on_message,
           timeout_ms,
           pending_line <> to_string(chunk),
+          raw_output,
           tool_executor,
           auto_approve_requests
         )
 
       {^port, {:exit_status, status}} ->
-        {:error, {:port_exit, status}}
+        {:error, port_exit_error(status, raw_output, pending_line)}
     after
       timeout_ms ->
         {:error, :turn_timeout}
     end
   end
 
-  defp handle_incoming(port, on_message, data, timeout_ms, tool_executor, auto_approve_requests) do
+  defp handle_incoming(port, on_message, data, timeout_ms, raw_output, tool_executor, auto_approve_requests) do
     payload_string = to_string(data)
 
     case Jason.decode(payload_string) do
@@ -407,9 +550,12 @@ defmodule SymphonyElixir.Codex.AppServer do
           payload,
           payload_string,
           method,
-          timeout_ms,
-          tool_executor,
-          auto_approve_requests
+          %{
+            timeout_ms: timeout_ms,
+            raw_output: raw_output,
+            tool_executor: tool_executor,
+            auto_approve_requests: auto_approve_requests
+          }
         )
 
       {:ok, payload} ->
@@ -423,7 +569,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata_from_message(port, payload)
         )
 
-        receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+        receive_loop(port, on_message, timeout_ms, "", raw_output, tool_executor, auto_approve_requests)
 
       {:error, _reason} ->
         log_non_json_stream_line(payload_string, "turn stream")
@@ -440,7 +586,15 @@ defmodule SymphonyElixir.Codex.AppServer do
           )
         end
 
-        receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+        receive_loop(
+          port,
+          on_message,
+          timeout_ms,
+          "",
+          append_raw_output(raw_output, payload_string),
+          tool_executor,
+          auto_approve_requests
+        )
     end
   end
 
@@ -463,9 +617,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          payload,
          payload_string,
          method,
-         timeout_ms,
-         tool_executor,
-         auto_approve_requests
+         context
        ) do
     metadata = metadata_from_message(port, payload)
 
@@ -476,8 +628,8 @@ defmodule SymphonyElixir.Codex.AppServer do
            payload_string,
            on_message,
            metadata,
-           tool_executor,
-           auto_approve_requests
+           context.tool_executor,
+           context.auto_approve_requests
          ) do
       :input_required ->
         emit_message(
@@ -490,7 +642,15 @@ defmodule SymphonyElixir.Codex.AppServer do
         {:error, {:turn_input_required, payload}}
 
       :approved ->
-        receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+        receive_loop(
+          port,
+          on_message,
+          context.timeout_ms,
+          "",
+          context.raw_output,
+          context.tool_executor,
+          context.auto_approve_requests
+        )
 
       :approval_required ->
         emit_message(
@@ -524,7 +684,16 @@ defmodule SymphonyElixir.Codex.AppServer do
           )
 
           Logger.debug("Codex notification: #{inspect(method)}")
-          receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+
+          receive_loop(
+            port,
+            on_message,
+            context.timeout_ms,
+            "",
+            context.raw_output,
+            context.tool_executor,
+            context.auto_approve_requests
+          )
         end
     end
   end
@@ -926,27 +1095,27 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp await_response(port, request_id) do
-    with_timeout_response(port, request_id, Config.settings!().codex.read_timeout_ms, "")
+    with_timeout_response(port, request_id, Config.settings!().codex.read_timeout_ms, "", "")
   end
 
-  defp with_timeout_response(port, request_id, timeout_ms, pending_line) do
+  defp with_timeout_response(port, request_id, timeout_ms, pending_line, raw_output) do
     receive do
       {^port, {:data, {:eol, chunk}}} ->
         complete_line = pending_line <> to_string(chunk)
-        handle_response(port, request_id, complete_line, timeout_ms)
+        handle_response(port, request_id, complete_line, timeout_ms, raw_output)
 
       {^port, {:data, {:noeol, chunk}}} ->
-        with_timeout_response(port, request_id, timeout_ms, pending_line <> to_string(chunk))
+        with_timeout_response(port, request_id, timeout_ms, pending_line <> to_string(chunk), raw_output)
 
       {^port, {:exit_status, status}} ->
-        {:error, {:port_exit, status}}
+        {:error, port_exit_error(status, raw_output, pending_line)}
     after
       timeout_ms ->
         {:error, :response_timeout}
     end
   end
 
-  defp handle_response(port, request_id, data, timeout_ms) do
+  defp handle_response(port, request_id, data, timeout_ms, raw_output) do
     payload = to_string(data)
 
     case Jason.decode(payload) do
@@ -961,11 +1130,30 @@ defmodule SymphonyElixir.Codex.AppServer do
 
       {:ok, %{} = other} ->
         Logger.debug("Ignoring message while waiting for response: #{inspect(other)}")
-        with_timeout_response(port, request_id, timeout_ms, "")
+        with_timeout_response(port, request_id, timeout_ms, "", raw_output)
 
       {:error, _} ->
         log_non_json_stream_line(payload, "response stream")
-        with_timeout_response(port, request_id, timeout_ms, "")
+        with_timeout_response(port, request_id, timeout_ms, "", append_raw_output(raw_output, payload))
+    end
+  end
+
+  defp port_exit_error(status, raw_output, pending_line) do
+    output = append_raw_output(raw_output, pending_line)
+
+    case output |> to_string() |> String.trim() do
+      "" -> {:port_exit, status}
+      output -> {:port_exit, status, String.slice(output, 0, @max_stream_log_bytes)}
+    end
+  end
+
+  defp append_raw_output(raw_output, line) do
+    text = line |> to_string() |> String.trim()
+
+    cond do
+      text == "" -> raw_output
+      raw_output == "" -> String.slice(text, 0, @max_stream_log_bytes)
+      true -> String.slice(raw_output <> "\n" <> text, 0, @max_stream_log_bytes)
     end
   end
 

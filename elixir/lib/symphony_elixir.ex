@@ -23,15 +23,16 @@ defmodule SymphonyElixir.Application do
   def start(_type, _args) do
     :ok = SymphonyElixir.LogFile.configure()
 
-    children = [
-      {Phoenix.PubSub, name: SymphonyElixir.PubSub},
-      SymphonyElixir.Repo,
-      {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
-      SymphonyElixir.WorkflowStore,
-      SymphonyElixir.Orchestrator,
-      SymphonyElixir.HttpServer,
-      SymphonyElixir.StatusDashboard
-    ]
+    children =
+      [
+        {Phoenix.PubSub, name: SymphonyElixir.PubSub},
+        {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
+        SymphonyElixir.WorkflowStore,
+        SymphonyElixir.Orchestrator,
+        SymphonyElixir.HttpServer,
+        SymphonyElixir.StatusDashboard
+      ]
+      |> maybe_prepend_repo()
 
     Supervisor.start_link(
       children,
@@ -44,5 +45,20 @@ defmodule SymphonyElixir.Application do
   def stop(_state) do
     SymphonyElixir.StatusDashboard.render_offline_status()
     :ok
+  end
+
+  defp maybe_prepend_repo(children) do
+    if repo_enabled?() do
+      [SymphonyElixir.Repo | children]
+    else
+      children
+    end
+  end
+
+  defp repo_enabled? do
+    case System.get_env("SYMPHONY_REPO_ENABLED", "true") |> String.downcase() do
+      value when value in ["0", "false", "no", "off"] -> false
+      _ -> true
+    end
   end
 end

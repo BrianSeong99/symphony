@@ -251,7 +251,8 @@ outcome_projects:
         github_repository: BrianSeong99/symphony
         upstream_repository: openai/symphony
     policy_overrides:
-      docker_required: true
+      docker_required: false
+      native_daemon_required: true
       health_endpoint_required: true
       private_runtime_memory: true
 

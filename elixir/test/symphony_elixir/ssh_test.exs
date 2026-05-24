@@ -48,21 +48,25 @@ defmodule SymphonyElixir.SSHTest do
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
     previous_ssh_config = System.get_env("SYMPHONY_SSH_CONFIG")
+    previous_ssh_options = System.get_env("SYMPHONY_SSH_OPTIONS")
 
     on_exit(fn ->
       restore_env("PATH", previous_path)
       restore_env("SYMPHONY_SSH_CONFIG", previous_ssh_config)
+      restore_env("SYMPHONY_SSH_OPTIONS", previous_ssh_options)
       File.rm_rf(test_root)
     end)
 
     install_fake_ssh!(test_root, trace_file)
     System.put_env("SYMPHONY_SSH_CONFIG", "/tmp/symphony-test-ssh-config")
+    System.put_env("SYMPHONY_SSH_OPTIONS", "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/symphony_known_hosts")
 
     assert {:ok, {"", 0}} =
              SSH.run("localhost:2222", "echo ready", stderr_to_stdout: true)
 
     trace = File.read!(trace_file)
     assert trace =~ "-F /tmp/symphony-test-ssh-config"
+    assert trace =~ "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/symphony_known_hosts"
     assert trace =~ "-T -p 2222 localhost bash -lc"
     assert trace =~ "echo ready"
   end
@@ -160,6 +164,17 @@ defmodule SymphonyElixir.SSHTest do
   test "remote_shell_command/1 escapes embedded single quotes" do
     assert SSH.remote_shell_command("printf 'hello'") ==
              "bash -lc 'printf '\"'\"'hello'\"'\"''"
+  end
+
+  test "remote_shell_command/1 can inject host worker path" do
+    previous_remote_path = System.get_env("SYMPHONY_REMOTE_PATH")
+
+    on_exit(fn -> restore_env("SYMPHONY_REMOTE_PATH", previous_remote_path) end)
+
+    System.put_env("SYMPHONY_REMOTE_PATH", "/Users/brianseong/.local/bin:/opt/homebrew/bin")
+
+    assert SSH.remote_shell_command("codex --version") ==
+             "bash -lc 'export PATH=/Users/brianseong/.local/bin:/opt/homebrew/bin:$PATH\ncodex --version'"
   end
 
   defp install_fake_ssh!(test_root, trace_file, script \\ nil) do

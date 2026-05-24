@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ENV_FILE="${SYMPHONY_ENV_FILE:-$ROOT_DIR/.env}"
+WORKFLOW_FILE="${SYMPHONY_WORKFLOW_FILE:-$ROOT_DIR/elixir/WORKFLOW.md}"
+LOGS_ROOT="${SYMPHONY_LOGS_ROOT:-$ROOT_DIR/log}"
+PORT="${SYMPHONY_SERVER_PORT:-4000}"
+
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+
+export PATH="${SYMPHONY_NATIVE_PATH:-/Users/brianseong/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
+export MIX_ENV="${MIX_ENV:-dev}"
+export SYMPHONY_REPO_ENABLED="${SYMPHONY_REPO_ENABLED:-false}"
+export SYMPHONY_SERVER_HOST="${SYMPHONY_SERVER_HOST:-0.0.0.0}"
+
+cd "$ROOT_DIR/elixir"
+
+mkdir -p "$LOGS_ROOT"
+
+run_elixir() {
+  if command -v mise >/dev/null 2>&1; then
+    mise exec -- "$@"
+  else
+    "$@"
+  fi
+}
+
+if [ ! -x ./bin/symphony ]; then
+  run_elixir mix deps.get
+  run_elixir mix escript.build
+fi
+
+exec "$(command -v sh)" -c '
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec -- ./bin/symphony "$@"
+else
+  exec ./bin/symphony "$@"
+fi
+' sh \
+  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  --logs-root "$LOGS_ROOT" \
+  --port "$PORT" \
+  "$WORKFLOW_FILE"

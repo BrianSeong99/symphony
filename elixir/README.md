@@ -60,6 +60,11 @@ mise exec -- elixir --version
 
 ## Run
 
+Brian's Labs deployment runs Symphony natively on the Mac Studio so the
+orchestrator and Codex/Claude toolchain share the same host auth, PATH,
+worktrees, SSH keys, and GitHub CLI session. Docker is reserved for project
+application runtimes and build/test dependencies, not for the Symphony daemon.
+
 ```bash
 git clone https://github.com/openai/symphony
 cd symphony/elixir
@@ -69,6 +74,18 @@ mise exec -- mix setup
 mise exec -- mix build
 mise exec -- ./bin/symphony ./WORKFLOW.md
 ```
+
+For the Mac Studio native daemon:
+
+```bash
+cd /Users/brianseong/Develop/Labs/symphony
+bin/symphony-native
+```
+
+`bin/symphony-native` reads `.env` when present, starts the dashboard on port
+4000, disables the optional Ecto repo by default, and runs the local
+`elixir/WORKFLOW.md`. The launchd template lives at
+`ops/launchd/ai.symphony.runner.plist`.
 
 ## Configuration
 

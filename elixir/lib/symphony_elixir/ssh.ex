@@ -28,7 +28,7 @@ defmodule SymphonyElixir.SSH do
 
   @spec remote_shell_command(String.t()) :: String.t()
   def remote_shell_command(command) when is_binary(command) do
-    "bash -lc " <> shell_escape(command)
+    "bash -lc " <> shell_escape(remote_shell_prefix() <> command)
   end
 
   defp ssh_executable do
@@ -43,6 +43,7 @@ defmodule SymphonyElixir.SSH do
 
     []
     |> maybe_put_config()
+    |> maybe_put_extra_options()
     |> Kernel.++(["-T"])
     |> maybe_put_port(port)
     |> Kernel.++([destination, remote_shell_command(command)])
@@ -61,8 +62,34 @@ defmodule SymphonyElixir.SSH do
     end
   end
 
+  defp maybe_put_extra_options(args) do
+    case System.get_env("SYMPHONY_SSH_OPTIONS") do
+      options when is_binary(options) and options != "" ->
+        args ++ OptionParser.split(options)
+
+      _ ->
+        args
+    end
+  rescue
+    _error -> args
+  end
+
   defp maybe_put_port(args, nil), do: args
   defp maybe_put_port(args, port), do: args ++ ["-p", port]
+
+  defp remote_shell_prefix do
+    case System.get_env("SYMPHONY_REMOTE_PATH") do
+      path when is_binary(path) and path != "" ->
+        if String.contains?(path, ["\n", "\r", <<0>>]) do
+          ""
+        else
+          "export PATH=#{path}:$PATH\n"
+        end
+
+      _ ->
+        ""
+    end
+  end
 
   defp parse_target(target) when is_binary(target) do
     trimmed_target = String.trim(target)
