@@ -105,7 +105,7 @@ defmodule SymphonyElixir.CoreTest do
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/openai/symphony ."
+    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/BrianSeong99/symphony ."
     assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
     assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
     assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
@@ -615,6 +615,7 @@ defmodule SymphonyElixir.CoreTest do
     end)
 
     initial_state = :sys.get_state(pid)
+    failure_fingerprint = SymphonyElixir.RunnerObserver.failure_fingerprint({:port_exit, 1}, :process_exit_nonzero)
 
     running_entry = %{
       pid: self(),
@@ -622,7 +623,55 @@ defmodule SymphonyElixir.CoreTest do
       identifier: "LAB-RETRY",
       retry_attempt: 3,
       equivalent_attempt: 3,
-      last_failure_fingerprint: SymphonyElixir.RunnerObserver.failure_fingerprint(:bash_not_found, :missing_tool),
+      last_failure_fingerprint: failure_fingerprint,
+      issue: issue,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), {:port_exit, 1}})
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.retry_attempts, issue_id)
+    assert %{classification: :max_retry_attempts_exceeded, error: error} = state.blocked[issue_id]
+    assert error =~ "attempt=4"
+
+    assert_receive {:memory_tracker_run_log_upsert, ^issue_id, body}
+    assert body =~ "retry.blocked"
+    assert body =~ "max_retry_attempts_exceeded"
+  end
+
+  test "deterministic setup failures block immediately instead of retrying" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+
+    issue_id = "issue-missing-tool"
+    issue = %Issue{id: issue_id, identifier: "LAB-MISSING-TOOL", state: "In Progress"}
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :MissingToolBlockOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "LAB-MISSING-TOOL",
+      retry_attempt: 0,
       issue: issue,
       started_at: DateTime.utc_now()
     }
@@ -639,12 +688,12 @@ defmodule SymphonyElixir.CoreTest do
     state = :sys.get_state(pid)
 
     refute Map.has_key?(state.retry_attempts, issue_id)
-    assert %{classification: :max_retry_attempts_exceeded, error: error} = state.blocked[issue_id]
-    assert error =~ "attempt=4"
+    assert %{classification: :missing_tool, error: error, equivalent_attempt: 1} = state.blocked[issue_id]
+    assert error =~ "non-retryable runner failure"
 
     assert_receive {:memory_tracker_run_log_upsert, ^issue_id, body}
     assert body =~ "retry.blocked"
-    assert body =~ "max_retry_attempts_exceeded"
+    assert body =~ "missing_tool"
   end
 
   test "blocked issue surfaces and retries run-log writeback failures" do
@@ -667,7 +716,7 @@ defmodule SymphonyElixir.CoreTest do
     end)
 
     initial_state = :sys.get_state(pid)
-    failure_fingerprint = SymphonyElixir.RunnerObserver.failure_fingerprint(:bash_not_found, :missing_tool)
+    failure_fingerprint = SymphonyElixir.RunnerObserver.failure_fingerprint({:port_exit, 1}, :process_exit_nonzero)
 
     running_entry = %{
       pid: self(),
@@ -687,7 +736,7 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
-    send(pid, {:DOWN, ref, :process, self(), :bash_not_found})
+    send(pid, {:DOWN, ref, :process, self(), {:port_exit, 1}})
     Process.sleep(50)
     failed_state = :sys.get_state(pid)
 

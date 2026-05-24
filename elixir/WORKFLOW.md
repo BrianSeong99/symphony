@@ -16,10 +16,10 @@ tracker:
 polling:
   interval_ms: 5000
 workspace:
-  root: ~/code/symphony-workspaces
+  root: ~/Develop/Labs/symphony-workspaces
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/openai/symphony .
+    git clone --depth 1 https://github.com/BrianSeong99/symphony .
     if command -v mise >/dev/null 2>&1; then
       cd elixir && mise trust && mise exec -- mix deps.get
     fi
@@ -30,7 +30,7 @@ agent:
   max_turns: 20
   max_retry_attempts: 3
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
+  command: /Users/brianseong/.local/bin/codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:
@@ -58,6 +58,7 @@ Hard defaults from Brian's global guidance:
 - For Symphony Elixir, PR bodies must follow `../.github/pull_request_template.md` and can be checked with `mix pr_body.check --file /path/to/pr_body.md`.
 - Use the repo's merge/land flow instead of ad hoc `gh pr merge` commands when one is documented.
 - If behavior or config changes, update the relevant docs in the same PR when local guidance requires it.
+- Symphony runs as a native Mac orchestration daemon. Project application runtimes and build/test dependencies may use Docker, but Symphony itself and its Claude/Codex agent execution run on the host.
 
 Resource load order for every Symphony-managed repo:
 

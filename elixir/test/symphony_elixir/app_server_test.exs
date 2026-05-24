@@ -1371,6 +1371,12 @@ defmodule SymphonyElixir.AppServerTest do
       count=0
       printf 'ARGV:%s\\n' "$*" >> "$trace_file"
 
+      case "$*" in
+        *command*fake-remote-codex*)
+          exit 0
+          ;;
+      esac
+
       while IFS= read -r line; do
         count=$((count + 1))
         printf 'JSON:%s\\n' "$line" >> "$trace_file"
@@ -1424,11 +1430,10 @@ defmodule SymphonyElixir.AppServerTest do
       trace = File.read!(trace_file)
       lines = String.split(trace, "\n", trim: true)
 
-      assert argv_line = Enum.find(lines, &String.starts_with?(&1, "ARGV:"))
+      assert argv_line = Enum.find(lines, &(String.starts_with?(&1, "ARGV:") and String.contains?(&1, "cd ")))
       assert argv_line =~ "-T -p 2200 worker-01 bash -lc"
       assert argv_line =~ "cd "
       assert argv_line =~ remote_workspace
-      assert argv_line =~ "exec "
       assert argv_line =~ "fake-remote-codex app-server"
 
       expected_turn_policy = %{
@@ -1468,6 +1473,132 @@ defmodule SymphonyElixir.AppServerTest do
                  false
                end
              end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server blocks remote missing codex before opening an app-server stream" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-remote-preflight-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+    end)
+
+    try do
+      trace_file = Path.join(test_root, "ssh.trace")
+      fake_ssh = Path.join(test_root, "ssh")
+      remote_workspace = "/remote/workspaces/MT-REMOTE-MISSING"
+
+      File.mkdir_p!(test_root)
+      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+
+      case "$*" in
+        */missing/codex*)
+          printf '%s\\n' '__SYMPHONY_PREFLIGHT_MISSING_TOOL__:/missing/codex'
+          exit 127
+          ;;
+        *)
+          printf '%s\\n' '{"id":1,"result":{}}'
+          exit 0
+          ;;
+      esac
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: "/remote/workspaces",
+        codex_command: "/missing/codex app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-remote-missing-tool",
+        identifier: "MT-REMOTE-MISSING",
+        title: "Block missing remote Codex",
+        description: "Preflight should classify deterministic remote worker setup failures",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-REMOTE-MISSING",
+        labels: ["backend"]
+      }
+
+      assert {:error,
+              {:preflight_failed,
+               %{
+                 classification: :missing_tool,
+                 missing_tools: ["/missing/codex"],
+                 reason: "missing required runner tool(s): /missing/codex"
+               }}} =
+               AppServer.run(
+                 remote_workspace,
+                 "Run remote worker",
+                 issue,
+                 worker_host: "worker-01"
+               )
+
+      trace = File.read!(trace_file)
+      assert trace =~ "__SYMPHONY_PREFLIGHT_MISSING_TOOL__"
+      refute trace =~ "cd #{remote_workspace}"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server preserves raw startup output on early port exits" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-startup-output-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-STARTUP-OUTPUT")
+      codex_binary = Path.join(test_root, "fake-codex")
+
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      printf '%s' 'permission denied while loading Codex credentials'
+      exit 126
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-startup-output",
+        identifier: "MT-STARTUP-OUTPUT",
+        title: "Preserve startup output",
+        description: "Early app-server exits should preserve raw stderr/stdout evidence",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-STARTUP-OUTPUT",
+        labels: ["backend"]
+      }
+
+      assert {:error, {:port_exit, 126, output}} =
+               AppServer.run(workspace, "Capture startup failure", issue)
+
+      assert output =~ "permission denied while loading Codex credentials"
     after
       File.rm_rf(test_root)
     end

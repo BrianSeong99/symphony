@@ -13,7 +13,7 @@ defmodule SymphonyElixir.DeploymentTest do
     def query("SELECT 1", [], _opts), do: {:error, :database_down}
   end
 
-  test "health check requires app and database checks to pass" do
+  test "health check requires app and database checks to pass when repo is enabled" do
     healthy = Health.check(repo: HealthyRepo)
     unhealthy = Health.check(repo: UnhealthyRepo)
 
@@ -24,6 +24,18 @@ defmodule SymphonyElixir.DeploymentTest do
     assert unhealthy.status == "error"
     assert unhealthy.checks.database.status == "error"
     refute Health.healthy?(unhealthy)
+  end
+
+  test "health check skips database for native repo-disabled runner" do
+    old_repo_enabled = System.get_env("SYMPHONY_REPO_ENABLED")
+    System.put_env("SYMPHONY_REPO_ENABLED", "false")
+
+    on_exit(fn -> restore_env("SYMPHONY_REPO_ENABLED", old_repo_enabled) end)
+
+    health = Health.check(repo: UnhealthyRepo)
+    assert health.status == "ok"
+    assert health.checks.database == %{status: "skipped", reason: "repo_disabled"}
+    assert Health.healthy?(health)
   end
 
   test "server host and port can be configured through container environment" do
@@ -53,14 +65,20 @@ defmodule SymphonyElixir.DeploymentTest do
     assert compose["services"]["web"]["healthcheck"]["test"] == ["CMD-SHELL", "curl -fsS http://127.0.0.1:4000/healthz >/dev/null"]
   end
 
-  test "homelab registration metadata points at the stable compose container" do
+  test "homelab registration metadata points at the native Mac runner" do
     metadata = @root |> Path.join("config/homelab/symphony.yml") |> YamlElixir.read_from_file!()
+    launchd_plist = File.read!(Path.join(@root, "ops/launchd/ai.symphony.runner.plist"))
 
     assert metadata["name"] == "symphony"
     assert metadata["kind"] == "prod"
-    assert metadata["upstream"] == "symphony-web-1:4000"
-    assert metadata["upstream_kind"] == "docker"
+    assert metadata["upstream"] == "host.docker.internal:4000"
+    assert metadata["upstream_kind"] == "host"
     assert metadata["health_path"] == "/healthz"
     assert File.exists?(Path.join(@root, "bin/homelab-smoke.sh"))
+    assert File.exists?(Path.join(@root, "bin/symphony-native"))
+    assert File.exists?(Path.join(@root, "ops/launchd/ai.symphony.runner.plist"))
+    assert launchd_plist =~ "/tmp/ai.symphony.runner.out.log"
+    assert launchd_plist =~ "/tmp/ai.symphony.runner.err.log"
+    refute launchd_plist =~ "/log/launchd."
   end
 end

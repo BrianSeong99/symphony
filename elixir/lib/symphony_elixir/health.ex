@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Health do
   @moduledoc """
-  Runtime health checks for the containerized Symphony service.
+  Runtime health checks for the Symphony service.
   """
 
   alias SymphonyElixir.Repo
@@ -15,10 +15,9 @@ defmodule SymphonyElixir.Health do
 
   @spec check(keyword()) :: check_result()
   def check(opts) when is_list(opts) do
-    checks = %{
-      app: app_check(),
-      database: database_check(Keyword.get(opts, :repo, Repo))
-    }
+    checks =
+      %{app: app_check()}
+      |> maybe_put_database_check(Keyword.get(opts, :repo, Repo))
 
     %{
       status: status_for(checks),
@@ -38,6 +37,14 @@ defmodule SymphonyElixir.Health do
     end
   end
 
+  defp maybe_put_database_check(checks, repo) do
+    if repo_enabled?() do
+      Map.put(checks, :database, database_check(repo))
+    else
+      Map.put(checks, :database, %{status: "skipped", reason: "repo_disabled"})
+    end
+  end
+
   defp database_check(repo) do
     case repo.query("SELECT 1", [], timeout: 2_000) do
       {:ok, _result} -> %{status: "ok"}
@@ -50,10 +57,17 @@ defmodule SymphonyElixir.Health do
   end
 
   defp status_for(checks) do
-    if Enum.all?(checks, fn {_name, check} -> check.status == "ok" end) do
+    if Enum.all?(checks, fn {_name, check} -> check.status in ["ok", "skipped"] end) do
       "ok"
     else
       "error"
+    end
+  end
+
+  defp repo_enabled? do
+    case System.get_env("SYMPHONY_REPO_ENABLED", "true") |> String.downcase() do
+      value when value in ["0", "false", "no", "off"] -> false
+      _ -> true
     end
   end
 end

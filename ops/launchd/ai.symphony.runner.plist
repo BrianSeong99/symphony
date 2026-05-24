@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.symphony.runner</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/brianseong/Develop/Labs/symphony/bin/symphony-native</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/brianseong/Develop/Labs/symphony</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/ai.symphony.runner.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/ai.symphony.runner.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SYMPHONY_REPO_ENABLED</key>
+    <string>false</string>
+    <key>SYMPHONY_SERVER_HOST</key>
+    <string>0.0.0.0</string>
+    <key>SYMPHONY_SERVER_PORT</key>
+    <string>4000</string>
+    <key>SYMPHONY_NATIVE_PATH</key>
+    <string>/Users/brianseong/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

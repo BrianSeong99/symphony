@@ -1119,7 +1119,20 @@ defmodule SymphonyElixir.Orchestrator do
         retry_token: retry_token,
         identifier: identifier,
         error: error,
-        next_attempt: next_attempt
+        next_attempt: next_attempt,
+        non_retryable?: non_retryable_classification?(classification)
+      }
+    )
+  end
+
+  defp schedule_or_block_retry(state, issue_id, retry_entry, _retry_limit_exceeded?, %{non_retryable?: true}) do
+    block_issue_from_retry_metadata(
+      state,
+      issue_id,
+      %{
+        retry_entry
+        | error: "non-retryable runner failure: #{retry_entry.error}",
+          suggested_action: retry_entry.suggested_action || RunnerObserver.suggested_action(retry_entry.classification)
       }
     )
   end
@@ -1453,6 +1466,11 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp retry_limit_exceeded?(_equivalent_attempt, _max_attempts, _failure_fingerprint), do: false
+
+  defp non_retryable_classification?(classification) when classification in [:missing_tool, :auth_failure, :permission_denied_loop],
+    do: true
+
+  defp non_retryable_classification?(_classification), do: false
 
   defp block_issue_from_retry_metadata(%State{} = state, issue_id, metadata)
        when is_binary(issue_id) and is_map(metadata) do
