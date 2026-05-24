@@ -48,7 +48,18 @@ defmodule SymphonyElixir.RunnerObserver do
     {:no_json_event_timeout, ["malformed json", "invalid json", "no_json_event_timeout", "json event timeout", "no json event"]},
     {:no_output_timeout, ["turn_timeout", "response_timeout", "stalled", "no output", "without codex activity"]},
     {:no_progress_budget_exceeded, ["no_progress_budget_exceeded", "no progress budget", "no git progress"]},
-    {:permission_denied_loop, ["permission denied", "approval_required", "requires approval"]},
+    {:permission_denied_loop,
+     [
+       "permission denied",
+       "approval_required",
+       "requires approval",
+       "mcpserver/elicitation/request",
+       "codex_approval_kind",
+       "mcp_tool_call",
+       "allow github to create a branch",
+       "allow github",
+       "approval prompt"
+     ]},
     {:requirements_mismatch, ["requirements_mismatch", "validation contract", "acceptance criteria mismatch"]},
     {:validation_failure_repeat, ["validation_failure_repeat", "test failure", "mix test", "validation failed"]},
     {:tool_failure_repeat, ["tool_failure_repeat", "tool_call_failed"]},
@@ -258,7 +269,7 @@ defmodule SymphonyElixir.RunnerObserver do
              :turn_input_required,
              :approval_required
            ] ->
-        [Atom.to_string(event), trusted_payload_reason(payload, include_raw?: false)]
+        [Atom.to_string(event), trusted_payload_reason(payload, include_raw?: event in [:turn_input_required, :approval_required])]
         |> Enum.reject(&(&1 in [nil, ""]))
         |> Enum.join(" ")
 
@@ -299,9 +310,11 @@ defmodule SymphonyElixir.RunnerObserver do
       [:classification, "classification", :reason, "reason", :error, "error", :details, "details"]
 
     raw_keys = if include_raw?, do: [:payload, "payload", :raw, "raw"], else: []
+    nested_details = if include_raw?, do: trusted_nested_payload_details(payload), else: []
 
     (keys ++ raw_keys)
     |> Enum.map(&Map.get(payload, &1))
+    |> Kernel.++(nested_details)
     |> Enum.reject(&is_nil/1)
     |> Enum.map(&normalize_reason/1)
     |> Enum.reject(&(&1 == ""))
@@ -310,6 +323,21 @@ defmodule SymphonyElixir.RunnerObserver do
 
   defp trusted_payload_reason(payload, _opts) when is_binary(payload), do: normalize_reason(payload)
   defp trusted_payload_reason(payload, _opts), do: normalize_reason(payload)
+
+  defp trusted_nested_payload_details(payload) when is_map(payload) do
+    nested_payload = Map.get(payload, :payload) || Map.get(payload, "payload") || %{}
+
+    [
+      get_in(nested_payload, ["method"]),
+      get_in(nested_payload, ["params", "message"]),
+      get_in(nested_payload, ["params", "_meta", "codex_approval_kind"]),
+      get_in(nested_payload, ["params", "_meta", "connector_name"]),
+      get_in(nested_payload, ["params", "_meta", "tool_title"]),
+      get_in(nested_payload, ["params", "_meta", "tool_description"])
+    ]
+  end
+
+  defp trusted_nested_payload_details(_payload), do: []
 
   defp known_classification(classification) do
     if classification in @known_classifications do

@@ -1280,6 +1280,8 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "You are running a Symphony-managed repository task."
     assert prompt =~ "Identifier: LAB-FAST"
     assert prompt =~ "Do not use `linear_graphql` during startup"
+    assert prompt =~ "Do not use GitHub connectors"
+    assert prompt =~ "Use local `git` and `gh` CLI"
     assert prompt =~ "inspect or edit repository files within 45 seconds"
     assert prompt =~ "first action after reading this prompt should be a repository command"
     refute prompt =~ "## Step 0"

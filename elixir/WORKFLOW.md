@@ -39,7 +39,7 @@ agent:
   no_progress_max_tokens: 100000
   prompt_mode: compact
 codex:
-  command: /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config model_reasoning_effort=low app-server
+  command: /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
   approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:
@@ -125,6 +125,10 @@ should not assume optional MCP tools such as Notion are available, and missing
 optional MCP tools are not blockers. Use only the injected Symphony context,
 the repository checkout, GitHub where the project policy allows it, and the
 approved runner commands.
+Do not use GitHub connectors, app connectors, or MCP app tools for branch,
+commit, push, PR, review, or merge operations in unattended runner sessions.
+Use the local `git` and `gh` CLI from the worktree instead. Any connector
+approval prompt is a runner failure, not a human checkpoint.
 
 Do not use the `linear_graphql` dynamic tool during normal startup. The issue
 identifier, title, state, URL, labels, and description are already injected
@@ -140,6 +144,8 @@ reconciling Linear workpads before touching the repository.
 Your first action after reading this prompt should be a repository command
 such as `pwd`, `git status --short`, `find`, `rg`, or opening the relevant
 guidance file. Do not spend the opening turn only reasoning.
+When publishing work, use the repo-local `commit`, `push`, and `land` skills
+only insofar as they route through local git and `gh` CLI commands.
 
 ## Default posture
 

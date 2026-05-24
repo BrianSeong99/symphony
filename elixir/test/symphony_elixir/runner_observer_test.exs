@@ -11,6 +11,29 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_failure("acceptance criteria mismatch after validation") == :requirements_mismatch
   end
 
+  test "classifies connector approval elicitations as non-retryable permission loops" do
+    failure =
+      ~s|{:turn_input_required, %{"method" => "mcpServer/elicitation/request", "params" => %{"_meta" => %{"codex_approval_kind" => "mcp_tool_call", "connector_name" => "GitHub", "tool_title" => "create_branch"}, "message" => "Allow GitHub to create a branch?"}}}|
+
+    assert RunnerObserver.classify_failure(failure) == :permission_denied_loop
+
+    payload = %{
+      payload: %{
+        "method" => "mcpServer/elicitation/request",
+        "params" => %{
+          "message" => "Allow GitHub to create a branch?",
+          "_meta" => %{
+            "codex_approval_kind" => "mcp_tool_call",
+            "connector_name" => "GitHub",
+            "tool_title" => "create_branch"
+          }
+        }
+      }
+    }
+
+    assert RunnerObserver.classify_event(:turn_input_required, payload) == :permission_denied_loop
+  end
+
   test "preserves preflight classifications through wrapped worker failures" do
     failure = %{
       classification: :missing_tool,
