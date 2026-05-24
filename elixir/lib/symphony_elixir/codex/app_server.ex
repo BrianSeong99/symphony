@@ -750,7 +750,17 @@ defmodule SymphonyElixir.Codex.AppServer do
         _ -> :tool_call_failed
       end
 
-    emit_message(on_message, event, %{payload: payload, raw: payload_string}, metadata)
+    emit_message(
+      on_message,
+      event,
+      %{
+        payload: payload,
+        raw: payload_string,
+        tool_name: tool_name,
+        tool_result: summarize_dynamic_tool_result(result)
+      },
+      metadata
+    )
 
     :approved
   end
@@ -1247,6 +1257,33 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp tool_call_arguments(_params), do: %{}
+
+  defp summarize_dynamic_tool_result(result) when is_map(result) do
+    %{
+      success: map_get_any(result, ["success", :success]),
+      output: summarize_dynamic_tool_output(Map.get(result, "output") || Map.get(result, :output))
+    }
+  end
+
+  defp summarize_dynamic_tool_result(result), do: %{success: nil, output: inspect(result, printable_limit: 600)}
+
+  defp summarize_dynamic_tool_output(output) when is_binary(output) do
+    output
+    |> String.replace(~r/(sk-[A-Za-z0-9_\-]{12,}|lin_api_[A-Za-z0-9_\-]+)/, "[redacted]")
+    |> String.slice(0, 1_000)
+  end
+
+  defp summarize_dynamic_tool_output(output), do: inspect(output, printable_limit: 600)
+
+  defp map_get_any(map, keys) when is_map(map) and is_list(keys) do
+    Enum.find_value(keys, fn key ->
+      if Map.has_key?(map, key), do: {:found, Map.get(map, key)}
+    end)
+    |> case do
+      {:found, value} -> value
+      nil -> nil
+    end
+  end
 
   defp send_message(port, message) do
     line = Jason.encode!(message) <> "\n"

@@ -9,6 +9,57 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_failure("stalled for 301000ms without codex activity") == :no_output_timeout
     assert RunnerObserver.classify_failure("403 forbidden from Linear") == :auth_failure
     assert RunnerObserver.classify_failure("acceptance criteria mismatch after validation") == :requirements_mismatch
+    assert RunnerObserver.classify_failure("Mix.PubSub start failed with :eperm") == :permission_denied_loop
+
+    assert RunnerObserver.classify_failure("fatal: unable to access URL: Could not resolve host: github.com") ==
+             :external_service_failure
+  end
+
+  test "classifies connector approval elicitations as non-retryable permission loops" do
+    failure =
+      ~s|{:turn_input_required, %{"method" => "mcpServer/elicitation/request", "params" => %{"_meta" => %{"codex_approval_kind" => "mcp_tool_call", "connector_name" => "GitHub", "tool_title" => "create_branch"}, "message" => "Allow GitHub to create a branch?"}}}|
+
+    assert RunnerObserver.classify_failure(failure) == :permission_denied_loop
+
+    payload = %{
+      payload: %{
+        "method" => "mcpServer/elicitation/request",
+        "params" => %{
+          "message" => "Allow GitHub to create a branch?",
+          "_meta" => %{
+            "codex_approval_kind" => "mcp_tool_call",
+            "connector_name" => "GitHub",
+            "tool_title" => "create_branch"
+          }
+        }
+      }
+    }
+
+    assert RunnerObserver.classify_event(:turn_input_required, payload) == :permission_denied_loop
+  end
+
+  test "classifies final agent permission blocker messages" do
+    payload = %{
+      message: "gh pr create failed: CreatePullRequest needs the correct permissions"
+    }
+
+    assert RunnerObserver.classify_event(:agent_message, payload) == :auth_failure
+  end
+
+  test "classifies failed validation command notifications" do
+    payload = %{
+      payload: %{
+        "method" => "item/completed",
+        "params" => %{"title" => "command execution (failed)"}
+      },
+      raw: """
+      item completed: command execution (call_123, failed)
+      SYMPHONY_SERVER_PORT=0 mix test test/symphony_elixir/runner_smoke_test.exs
+      1 test, 1 failure
+      """
+    }
+
+    assert RunnerObserver.classify_event(:notification, payload) == :validation_failure_repeat
   end
 
   test "preserves preflight classifications through wrapped worker failures" do
@@ -25,6 +76,36 @@ defmodule SymphonyElixir.RunnerObserverTest do
   test "does not classify normal json payload text as a stream failure" do
     refute RunnerObserver.classify_event(:session_started, %{jsonrpc: "2.0", path: "package.json"})
     assert RunnerObserver.classify_event(:stderr, "invalid json from app-server stream") == :no_json_event_timeout
+  end
+
+  test "ignores historical run-log text inside benign event payloads" do
+    old_log_payload = %{
+      payload: %{
+        "method" => "item/tool/call",
+        "params" => %{
+          "arguments" => %{
+            "body" => "previous Symphony run log contained missing_tool, auth_failure, and validation_failure_repeat"
+          }
+        }
+      },
+      raw: "previous Symphony run log contained missing_tool and auth_failure"
+    }
+
+    refute RunnerObserver.classify_event(:notification, old_log_payload)
+    refute RunnerObserver.classify_event(:tool_call_completed, old_log_payload)
+  end
+
+  test "classifies only trusted failure fields for runner events" do
+    startup_payload = %{reason: {:preflight_failed, %{classification: :missing_tool}}}
+
+    assert RunnerObserver.classify_event(:startup_failed, startup_payload) ==
+             :missing_tool
+
+    assert RunnerObserver.classify_event(:tool_call_failed, %{payload: "old validation failed text"}) ==
+             :tool_failure_repeat
+
+    assert RunnerObserver.classify_event(:turn_ended_with_error, %{reason: "no_progress_budget_exceeded"}) ==
+             :no_progress_budget_exceeded
   end
 
   test "preflight reports missing command tools with deterministic evidence" do

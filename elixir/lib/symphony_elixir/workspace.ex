@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Workspace do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, PathSafety, SSH}
+  alias SymphonyElixir.{Config, PathSafety, RunLog, SSH}
 
   @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
 
@@ -20,7 +20,9 @@ defmodule SymphonyElixir.Workspace do
 
       with {:ok, workspace} <- workspace_path_for_issue(safe_id, worker_host),
            :ok <- validate_workspace_path(workspace, worker_host),
-           {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host),
+           {:ok, workspace, created?, workspace_kind} <-
+             ensure_workspace(workspace, worker_host, safe_id, issue_context),
+           :ok <- maybe_log_workspace_ready(issue_context, workspace, worker_host, workspace_kind),
            :ok <- maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
         {:ok, workspace}
       end
@@ -31,21 +33,17 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp ensure_workspace(workspace, nil) do
-    cond do
-      File.dir?(workspace) ->
-        {:ok, workspace, false}
+  defp ensure_workspace(workspace, nil, safe_id, issue_context) do
+    case local_git_worktree_source_repo() do
+      nil ->
+        ensure_directory_workspace(workspace)
 
-      File.exists?(workspace) ->
-        File.rm_rf!(workspace)
-        create_workspace(workspace)
-
-      true ->
-        create_workspace(workspace)
+      source_repo ->
+        ensure_git_worktree_workspace(workspace, source_repo, safe_id, issue_context)
     end
   end
 
-  defp ensure_workspace(workspace, worker_host) when is_binary(worker_host) do
+  defp ensure_workspace(workspace, worker_host, _safe_id, _issue_context) when is_binary(worker_host) do
     script =
       [
         "set -eu",
@@ -68,7 +66,9 @@ defmodule SymphonyElixir.Workspace do
 
     case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
       {:ok, {output, 0}} ->
-        parse_remote_workspace_output(output)
+        with {:ok, workspace, created?} <- parse_remote_workspace_output(output) do
+          {:ok, workspace, created?, :remote_directory}
+        end
 
       {:ok, {output, status}} ->
         {:error, {:workspace_prepare_failed, worker_host, status, output}}
@@ -78,11 +78,253 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp create_workspace(workspace) do
+  defp ensure_directory_workspace(workspace) do
+    cond do
+      File.dir?(workspace) ->
+        {:ok, workspace, false, :directory}
+
+      File.exists?(workspace) ->
+        File.rm_rf!(workspace)
+        create_workspace(workspace, :directory)
+
+      true ->
+        create_workspace(workspace, :directory)
+    end
+  end
+
+  defp create_workspace(workspace, workspace_kind) do
     File.rm_rf!(workspace)
     File.mkdir_p!(workspace)
-    {:ok, workspace, true}
+    {:ok, workspace, true, workspace_kind}
   end
+
+  defp local_git_worktree_source_repo do
+    case Config.settings!().workspace.source_repo do
+      source_repo when is_binary(source_repo) and source_repo != "" ->
+        source_repo
+        |> Path.expand()
+        |> PathSafety.canonicalize()
+        |> case do
+          {:ok, canonical_source_repo} -> canonical_source_repo
+          {:error, reason} -> raise ArgumentError, "invalid workspace.source_repo: #{inspect(reason)}"
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp ensure_git_worktree_workspace(workspace, source_repo, safe_id, issue_context) do
+    branch = worktree_branch_name(safe_id)
+    expected_worktree? = git_worktree?(workspace) and git_current_branch(workspace) == branch
+
+    with :ok <- validate_git_source_repo(source_repo),
+         :ok <- prepare_git_worktree_path(workspace),
+         :ok <- maybe_fetch_git_base_ref(source_repo),
+         :ok <- create_git_worktree(source_repo, workspace, branch, Config.settings!().workspace.base_ref),
+         :ok <- verify_git_worktree(workspace) do
+      Logger.info("Workspace ready as git worktree #{issue_log_context(issue_context)} workspace=#{workspace} source_repo=#{source_repo} branch=#{branch}")
+      {:ok, workspace, !expected_worktree?, :git_worktree}
+    end
+  end
+
+  defp validate_git_source_repo(source_repo) do
+    if File.dir?(source_repo) do
+      case System.cmd("git", ["-C", source_repo, "rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+        {_output, 0} -> :ok
+        {output, status} -> {:error, {:invalid_git_source_repo, source_repo, status, output}}
+      end
+    else
+      {:error, {:missing_git_source_repo, source_repo}}
+    end
+  end
+
+  defp prepare_git_worktree_path(workspace) do
+    cond do
+      git_worktree?(workspace) ->
+        :ok
+
+      File.dir?(workspace) ->
+        quarantine_stale_workspace(workspace)
+
+      File.exists?(workspace) ->
+        File.rm_rf!(workspace)
+        File.mkdir_p!(Path.dirname(workspace))
+        :ok
+
+      true ->
+        File.mkdir_p!(Path.dirname(workspace))
+        :ok
+    end
+  end
+
+  defp quarantine_stale_workspace(workspace) do
+    stale_path = workspace <> ".stale-" <> Integer.to_string(System.system_time(:second))
+    File.rename!(workspace, stale_path)
+    Logger.warning("Quarantined non-worktree Symphony workspace workspace=#{workspace} stale_path=#{stale_path}")
+    :ok
+  end
+
+  defp maybe_fetch_git_base_ref(source_repo) do
+    case split_remote_base_ref(Config.settings!().workspace.base_ref) do
+      {:ok, remote, branch} ->
+        maybe_fetch_remote_base_ref(source_repo, remote, branch)
+
+      :local_ref ->
+        :ok
+    end
+  end
+
+  defp maybe_fetch_remote_base_ref(source_repo, remote, branch) do
+    case System.cmd("git", ["-C", source_repo, "remote", "get-url", remote], stderr_to_stdout: true) do
+      {_remote_url, 0} -> fetch_remote_base_ref(source_repo, remote, branch)
+      {_output, _status} -> :ok
+    end
+  end
+
+  defp fetch_remote_base_ref(source_repo, remote, branch) do
+    case System.cmd("git", ["-C", source_repo, "fetch", remote, branch], stderr_to_stdout: true) do
+      {_output, 0} -> :ok
+      {output, status} -> git_fetch_failed(source_repo, status, output)
+    end
+  end
+
+  defp git_fetch_failed(source_repo, status, output) do
+    {:error, {:git_fetch_failed, source_repo, Config.settings!().workspace.base_ref, status, output}}
+  end
+
+  defp split_remote_base_ref(base_ref) when is_binary(base_ref) do
+    case String.split(base_ref, "/", parts: 2) do
+      [remote, branch] when remote != "" and branch != "" -> {:ok, remote, branch}
+      _ -> :local_ref
+    end
+  end
+
+  defp split_remote_base_ref(_base_ref), do: :local_ref
+
+  defp create_git_worktree(source_repo, workspace, branch, base_ref) do
+    cond do
+      git_worktree?(workspace) and git_current_branch(workspace) == branch ->
+        :ok
+
+      git_worktree?(workspace) ->
+        recreate_git_worktree(source_repo, workspace, branch, base_ref)
+
+      true ->
+        do_create_git_worktree(source_repo, workspace, branch, base_ref)
+    end
+  end
+
+  defp recreate_git_worktree(source_repo, workspace, branch, base_ref) do
+    Logger.warning("Recreating stale Symphony git worktree workspace=#{workspace} expected_branch=#{branch}")
+
+    with :ok <- remove_git_worktree(source_repo, workspace) do
+      do_create_git_worktree(source_repo, workspace, branch, base_ref)
+    end
+  end
+
+  defp remove_git_worktree(source_repo, workspace) do
+    case System.cmd("git", ["-C", source_repo, "worktree", "remove", "--force", workspace], stderr_to_stdout: true) do
+      {_output, 0} -> :ok
+      {output, status} -> {:error, {:git_worktree_remove_failed, workspace, status, output}}
+    end
+  end
+
+  defp do_create_git_worktree(source_repo, workspace, branch, base_ref) do
+    :ok = prune_git_worktrees(source_repo)
+
+    args =
+      if git_branch_exists?(source_repo, branch) do
+        ["-C", source_repo, "worktree", "add", workspace, branch]
+      else
+        ["-C", source_repo, "worktree", "add", "-b", branch, workspace, base_ref]
+      end
+
+    case System.cmd("git", args, stderr_to_stdout: true) do
+      {_output, 0} -> :ok
+      {output, status} -> {:error, {:git_worktree_add_failed, workspace, branch, base_ref, status, output}}
+    end
+  end
+
+  defp prune_git_worktrees(source_repo) do
+    System.cmd("git", ["-C", source_repo, "worktree", "prune"], stderr_to_stdout: true)
+    :ok
+  end
+
+  defp git_branch_exists?(source_repo, branch) do
+    case System.cmd("git", ["-C", source_repo, "show-ref", "--verify", "--quiet", "refs/heads/#{branch}"], stderr_to_stdout: true) do
+      {_output, 0} -> true
+      {_output, _status} -> false
+    end
+  end
+
+  defp git_current_branch(workspace) do
+    case System.cmd("git", ["-C", workspace, "branch", "--show-current"], stderr_to_stdout: true) do
+      {branch, 0} -> String.trim(branch)
+      {_output, _status} -> nil
+    end
+  end
+
+  defp verify_git_worktree(workspace) do
+    if git_worktree?(workspace) do
+      :ok
+    else
+      {:error, {:workspace_not_git_worktree, workspace}}
+    end
+  end
+
+  defp git_worktree?(workspace) when is_binary(workspace) do
+    if File.dir?(workspace) do
+      with {git_dir, 0} <- System.cmd("git", ["-C", workspace, "rev-parse", "--git-dir"], stderr_to_stdout: true),
+           {common_dir, 0} <- System.cmd("git", ["-C", workspace, "rev-parse", "--git-common-dir"], stderr_to_stdout: true) do
+        normalize_git_path(workspace, git_dir) != normalize_git_path(workspace, common_dir)
+      else
+        _ -> false
+      end
+    else
+      false
+    end
+  end
+
+  defp normalize_git_path(workspace, path) when is_binary(path) do
+    path = String.trim(path)
+
+    if Path.type(path) == :absolute do
+      Path.expand(path)
+    else
+      Path.expand(path, workspace)
+    end
+  end
+
+  defp worktree_branch_name(safe_id) do
+    prefix =
+      Config.settings!().workspace.branch_prefix
+      |> to_string()
+      |> String.trim()
+      |> String.trim("/")
+
+    case prefix do
+      "" -> safe_id
+      prefix -> prefix <> "/" <> safe_id
+    end
+  end
+
+  defp maybe_log_workspace_ready(%{issue_id: issue_id, issue_identifier: identifier}, workspace, worker_host, workspace_kind)
+       when is_binary(issue_id) do
+    case RunLog.log(issue_id, :"build.progress", %{
+           identifier: identifier,
+           role: :runner,
+           stage: "workspace.ready",
+           workspace_kind: workspace_kind,
+           worker_host: worker_host || "local",
+           worktree: workspace
+         }) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:linear_writeback_failed, reason}}
+    end
+  end
+
+  defp maybe_log_workspace_ready(_issue_context, _workspace, _worker_host, _workspace_kind), do: :ok
 
   @spec remove(Path.t()) :: {:ok, [String.t()]} | {:error, term(), String.t()}
   def remove(workspace), do: remove(workspace, nil)
@@ -94,7 +336,7 @@ defmodule SymphonyElixir.Workspace do
         case validate_workspace_path(workspace, nil) do
           :ok ->
             maybe_run_before_remove_hook(workspace, nil)
-            File.rm_rf(workspace)
+            remove_local_workspace_path(workspace)
 
           {:error, reason} ->
             {:error, reason, ""}
@@ -125,6 +367,19 @@ defmodule SymphonyElixir.Workspace do
       {:error, reason} ->
         {:error, reason, ""}
     end
+  end
+
+  defp remove_local_workspace_path(workspace) do
+    if git_worktree?(workspace) do
+      case System.cmd("git", ["-C", workspace, "worktree", "remove", "--force", workspace], stderr_to_stdout: true) do
+        {_output, 0} -> {:ok, []}
+        {output, status} -> {:error, {:git_worktree_remove_failed, workspace, status, output}, output}
+      end
+    else
+      File.rm_rf(workspace)
+    end
+  rescue
+    error -> {:error, error, Exception.message(error)}
   end
 
   @spec remove_issue_workspaces(term()) :: :ok

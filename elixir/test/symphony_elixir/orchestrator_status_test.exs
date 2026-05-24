@@ -964,6 +964,400 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert remaining_ms <= 10_500
   end
 
+  test "orchestrator blocks runs that exceed no-progress budget without git changes" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      no_progress_timeout_ms: 1_000,
+      no_progress_max_tokens: 10_000
+    )
+
+    issue_id = "issue-no-progress"
+    orchestrator_name = Module.concat(__MODULE__, :NoProgressOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    started_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-NO-PROGRESS",
+      issue: %Issue{id: issue_id, identifier: "LAB-NO-PROGRESS", state: "In Progress"},
+      workspace_path: nil,
+      session_id: "thread-no-progress-turn-1",
+      codex_total_tokens: 12_000,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Process.alive?(worker_pid)
+    refute Map.has_key?(state.running, issue_id)
+
+    assert %{
+             identifier: "LAB-NO-PROGRESS",
+             classification: :no_progress_budget_exceeded,
+             error: error,
+             suggested_action: suggested_action
+           } = state.blocked[issue_id]
+
+    assert error =~ "no_progress_budget_exceeded"
+    assert suggested_action =~ "no branch/file/PR progress"
+  end
+
+  test "orchestrator no-progress token budget ignores cached context tokens" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      no_progress_timeout_ms: 60_000,
+      no_progress_max_tokens: 10_000
+    )
+
+    issue_id = "issue-cached-token-progress"
+    orchestrator_name = Module.concat(__MODULE__, :CachedTokenProgressOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    started_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-CACHED-TOKENS",
+      issue: %Issue{id: issue_id, identifier: "LAB-CACHED-TOKENS", state: "In Progress"},
+      workspace_path: nil,
+      session_id: "thread-cached-token-turn-1",
+      codex_total_tokens: 221_646,
+      codex_uncached_total_tokens: 3_200,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(worker_pid)
+    assert Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.blocked, issue_id)
+  end
+
+  test "orchestrator blocks dirty worktrees that never commit or publish" do
+    workspace =
+      Path.join(System.tmp_dir!(), "symphony-dirty-progress-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(workspace)
+    File.write!(Path.join(workspace, "README.md"), "base\n")
+
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "init", "-b", "main"], stderr_to_stdout: true)
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "config", "user.name", "Test User"], stderr_to_stdout: true)
+
+    assert {_output, 0} =
+             System.cmd("git", ["-C", workspace, "config", "user.email", "test@example.com"], stderr_to_stdout: true)
+
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "add", "README.md"], stderr_to_stdout: true)
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "commit", "-m", "initial"], stderr_to_stdout: true)
+
+    File.write!(Path.join(workspace, "dirty.txt"), "uncommitted progress\n")
+
+    on_exit(fn -> File.rm_rf(workspace) end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      workspace_base_ref: "main",
+      codex_stall_timeout_ms: 0,
+      no_progress_timeout_ms: 1_000,
+      no_progress_max_tokens: 10_000
+    )
+
+    issue_id = "issue-dirty-progress"
+    orchestrator_name = Module.concat(__MODULE__, :DirtyProgressOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    started_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-DIRTY-PROGRESS",
+      issue: %Issue{id: issue_id, identifier: "LAB-DIRTY-PROGRESS", state: "In Progress"},
+      workspace_path: workspace,
+      session_id: "thread-dirty-progress-turn-1",
+      codex_total_tokens: 35_000,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Process.alive?(worker_pid)
+    refute Map.has_key?(state.running, issue_id)
+
+    assert %{
+             identifier: "LAB-DIRTY-PROGRESS",
+             classification: :no_progress_budget_exceeded,
+             error: error,
+             suggested_action: suggested_action
+           } = state.blocked[issue_id]
+
+    assert error =~ "no_progress_budget_exceeded"
+    assert error =~ "dirty_"
+    assert suggested_action =~ "no branch/file/PR progress"
+  end
+
+  test "orchestrator resets no-progress budget when a worktree changes" do
+    workspace =
+      Path.join(System.tmp_dir!(), "symphony-dirty-reset-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(workspace)
+    File.write!(Path.join(workspace, "README.md"), "base\n")
+
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "init", "-b", "main"], stderr_to_stdout: true)
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "config", "user.name", "Test User"], stderr_to_stdout: true)
+
+    assert {_output, 0} =
+             System.cmd("git", ["-C", workspace, "config", "user.email", "test@example.com"], stderr_to_stdout: true)
+
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "add", "README.md"], stderr_to_stdout: true)
+    assert {_output, 0} = System.cmd("git", ["-C", workspace, "commit", "-m", "initial"], stderr_to_stdout: true)
+
+    File.write!(Path.join(workspace, "dirty.txt"), "fresh progress\n")
+
+    on_exit(fn -> File.rm_rf(workspace) end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      workspace_base_ref: "main",
+      codex_stall_timeout_ms: 0,
+      no_progress_timeout_ms: 1_000,
+      no_progress_max_tokens: 10_000
+    )
+
+    issue_id = "issue-dirty-reset"
+    orchestrator_name = Module.concat(__MODULE__, :DirtyResetOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    started_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-DIRTY-RESET",
+      issue: %Issue{id: issue_id, identifier: "LAB-DIRTY-RESET", state: "In Progress"},
+      workspace_path: workspace,
+      session_id: "thread-dirty-reset-turn-1",
+      codex_total_tokens: 35_000,
+      workspace_progress_signature: "clean-before-change",
+      workspace_progress_changed_at: started_at,
+      workspace_progress_tokens: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(worker_pid)
+    assert Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.blocked, issue_id)
+
+    assert %{workspace_progress_tokens: 35_000, workspace_progress_signature: signature} = state.running[issue_id]
+    refute signature == "clean-before-change"
+  end
+
+  test "orchestrator can cancel an active run and preserve blocked evidence" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
+
+    issue_id = "issue-cancel"
+    orchestrator_name = Module.concat(__MODULE__, :CancelOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-CANCEL",
+      issue: %Issue{id: issue_id, identifier: "LAB-CANCEL", state: "In Progress"},
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    assert {:ok, %{identifier: "LAB-CANCEL", reason: "smoke test stop"}} =
+             Orchestrator.cancel_issue(orchestrator_name, issue_id, "smoke test stop")
+
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Process.alive?(worker_pid)
+    refute Map.has_key?(state.running, issue_id)
+    assert %{error: "operator_cancelled: smoke test stop"} = state.blocked[issue_id]
+  end
+
+  test "orchestrator blocks normal completion when final agent message reports an auth blocker" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
+
+    issue_id = "issue-completion-blocker"
+    orchestrator_name = Module.concat(__MODULE__, :CompletionBlockerOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    ref = make_ref()
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: ref,
+      identifier: "LAB-COMPLETION-BLOCKER",
+      issue: %Issue{id: issue_id, identifier: "LAB-COMPLETION-BLOCKER", state: "Todo"},
+      started_at: DateTime.utc_now(),
+      last_codex_message: "gh pr create failed: CreatePullRequest needs the correct permissions",
+      last_codex_event: :agent_message
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {:DOWN, ref, :process, worker_pid, :normal})
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.retry_attempts, issue_id)
+
+    assert %{
+             identifier: "LAB-COMPLETION-BLOCKER",
+             classification: :auth_failure,
+             error: "agent completed with blocking classification=auth_failure"
+           } = state.blocked[issue_id]
+  end
+
   test "orchestrator blocks repeated equivalent stalls at the retry ceiling" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -1202,6 +1596,71 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              identifier: "MT-INPUT-NORMAL",
              error: "codex turn requires operator input"
            } = state.blocked[issue_id]
+  end
+
+  test "terminal running issues write final evidence before workspace cleanup" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-terminal-evidence-#{System.unique_integer([:positive])}")
+    workspace_root = Path.join(test_root, "workspaces")
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      tracker_api_token: nil,
+      tracker_project_slug: nil,
+      workspace_root: workspace_root
+    )
+
+    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+    on_exit(fn -> File.rm_rf(test_root) end)
+
+    issue_id = "issue-terminal-evidence"
+    workspace = Path.join(workspace_root, "LAB-DONE")
+    File.mkdir_p!(workspace)
+    System.cmd("git", ["init"], cd: workspace, stderr_to_stdout: true)
+    System.cmd("git", ["checkout", "-b", "brian/symphony/LAB-DONE"], cd: workspace, stderr_to_stdout: true)
+
+    worker = spawn(fn -> Process.sleep(:infinity) end)
+    ref = Process.monitor(worker)
+    started_at = DateTime.add(DateTime.utc_now(), -95, :second)
+
+    running_issue = %Issue{id: issue_id, identifier: "LAB-DONE", state: "In Progress"}
+    done_issue = %Issue{id: issue_id, identifier: "LAB-DONE", state: "Done"}
+
+    running_entry = %{
+      pid: worker,
+      ref: ref,
+      identifier: "LAB-DONE",
+      issue: running_issue,
+      workspace_path: workspace,
+      session_id: "thread-terminal-evidence",
+      turn_count: 2,
+      retry_attempt: 0,
+      equivalent_attempt: 0,
+      codex_total_tokens: 1_200,
+      codex_uncached_total_tokens: 140,
+      last_codex_event: :turn_completed,
+      last_codex_timestamp: DateTime.utc_now(),
+      started_at: started_at
+    }
+
+    state = %Orchestrator.State{
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      running: %{issue_id => running_entry},
+      claimed: MapSet.new([issue_id])
+    }
+
+    next_state = Orchestrator.reconcile_issue_states_for_test([done_issue], state)
+
+    refute Map.has_key?(next_state.running, issue_id)
+    refute MapSet.member?(next_state.claimed, issue_id)
+
+    assert_receive {:memory_tracker_run_log_upsert, ^issue_id, body}, 1_000
+    assert body =~ "### Symphony run log: merge.done"
+    assert body =~ "LAB-DONE"
+    assert body =~ "issue.terminal"
+    assert body =~ "brian/symphony/LAB-DONE"
+    assert body =~ "thread-terminal-evidence"
+
+    refute File.exists?(workspace)
   end
 
   test "status dashboard renders offline marker to terminal" do

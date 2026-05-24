@@ -58,8 +58,11 @@ defmodule SymphonyElixir.DeploymentTest do
     compose = @root |> Path.join("compose.yaml") |> YamlElixir.read_from_file!()
 
     assert compose["name"] == "symphony"
+    assert compose["services"]["db"]["restart"] == "no"
+    assert compose["services"]["web"]["restart"] == "no"
     assert compose["services"]["db"]["ports"] in [nil, []]
     assert compose["services"]["web"]["ports"] in [nil, []]
+    assert compose["services"]["web"]["environment"]["SYMPHONY_RUNNER_ENABLED"] == "false"
     assert "homelab" in compose["services"]["web"]["networks"]
     assert compose["networks"]["homelab"] == %{"external" => true, "name" => "homelab"}
     assert compose["services"]["web"]["healthcheck"]["test"] == ["CMD-SHELL", "curl -fsS http://127.0.0.1:4000/healthz >/dev/null"]
@@ -77,6 +80,9 @@ defmodule SymphonyElixir.DeploymentTest do
     assert File.exists?(Path.join(@root, "bin/homelab-smoke.sh"))
     assert File.exists?(Path.join(@root, "bin/symphony-native"))
     assert File.exists?(Path.join(@root, "ops/launchd/ai.symphony.runner.plist"))
+    assert File.read!(Path.join(@root, "bin/symphony-native")) =~ "run_elixir mix escript.build"
+    refute File.read!(Path.join(@root, "bin/symphony-native")) =~ "[ ! -x ./bin/symphony ]"
+    assert launchd_plist =~ "/Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/bin/symphony-native"
     assert launchd_plist =~ "/tmp/ai.symphony.runner.out.log"
     assert launchd_plist =~ "/tmp/ai.symphony.runner.err.log"
     refute launchd_plist =~ "/log/launchd."

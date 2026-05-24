@@ -17,6 +17,7 @@ defmodule SymphonyElixir.RunnerObserver do
           | :max_retry_attempts_exceeded
           | :max_turns_exceeded
           | :missing_tool
+          | :no_progress_budget_exceeded
           | :no_json_event_timeout
           | :no_output_timeout
           | :permission_denied_loop
@@ -40,17 +41,52 @@ defmodule SymphonyElixir.RunnerObserver do
        "command not found",
        "no such file"
      ]},
-    {:auth_failure, ["401", "403", "unauthorized", "forbidden", "missing_linear_api_token", "missing auth", "expired credential"]},
+    {:auth_failure,
+     [
+       "401",
+       "403",
+       "unauthorized",
+       "forbidden",
+       "missing_linear_api_token",
+       "missing auth",
+       "expired credential",
+       "createpullrequest",
+       "correct permissions"
+     ]},
     {:api_retries_exhausted, ["api_retries_exhausted", "retries exhausted"]},
     {:internal_error, ["internal_error", "internal error"]},
     {:compaction_stall, ["compaction_stall", "no_output_after_compaction", "precompact", "postcompact", "compaction"]},
     {:no_json_event_timeout, ["malformed json", "invalid json", "no_json_event_timeout", "json event timeout", "no json event"]},
     {:no_output_timeout, ["turn_timeout", "response_timeout", "stalled", "no output", "without codex activity"]},
-    {:permission_denied_loop, ["permission denied", "approval_required", "requires approval"]},
+    {:no_progress_budget_exceeded, ["no_progress_budget_exceeded", "no progress budget", "no git progress"]},
+    {:permission_denied_loop,
+     [
+       "permission denied",
+       "approval_required",
+       "requires approval",
+       "eperm",
+       "operation not permitted",
+       "mcpserver/elicitation/request",
+       "codex_approval_kind",
+       "mcp_tool_call",
+       "allow github to create a branch",
+       "allow github",
+       "approval prompt"
+     ]},
     {:requirements_mismatch, ["requirements_mismatch", "validation contract", "acceptance criteria mismatch"]},
     {:validation_failure_repeat, ["validation_failure_repeat", "test failure", "mix test", "validation failed"]},
     {:tool_failure_repeat, ["tool_failure_repeat", "tool_call_failed"]},
-    {:external_service_failure, ["econnrefused", "timeout connecting", "external_service_failure", "service unavailable"]},
+    {:external_service_failure,
+     [
+       "econnrefused",
+       "timeout connecting",
+       "external_service_failure",
+       "service unavailable",
+       "could not resolve host",
+       "could not reach host",
+       "name or service not known",
+       "temporary failure in name resolution"
+     ]},
     {:budget_exhausted, ["budget_exhausted", "max-budget", "budget exceeded"]},
     {:max_turns_exceeded, ["max_turns_exceeded", "max turns"]},
     {:turn_failed, ["turn_failed", "turn/failed"]},
@@ -58,6 +94,20 @@ defmodule SymphonyElixir.RunnerObserver do
   ]
 
   @known_classifications Keyword.keys(@classification_patterns) ++ [:max_retry_attempts_exceeded]
+  @trusted_event_names %{
+    "malformed" => :malformed,
+    "stderr" => :stderr,
+    "startup_failed" => :startup_failed,
+    "notification" => :notification,
+    "turn_ended_with_error" => :turn_ended_with_error,
+    "turn_failed" => :turn_failed,
+    "turn_cancelled" => :turn_cancelled,
+    "tool_call_failed" => :tool_call_failed,
+    "agent_message" => :agent_message,
+    "unsupported_tool_call" => :unsupported_tool_call,
+    "turn_input_required" => :turn_input_required,
+    "approval_required" => :approval_required
+  }
 
   @spec classify_failure(failure()) :: classification()
   def classify_failure({:preflight_failed, failure}), do: classify_failure(failure)
@@ -91,17 +141,19 @@ defmodule SymphonyElixir.RunnerObserver do
 
   @spec classify_event(atom() | String.t() | nil, map() | nil) :: classification() | nil
   def classify_event(event, payload) do
-    event_text = event |> to_string() |> String.downcase()
-    payload_text = normalize_reason(payload)
+    explicit_payload_classification(payload) ||
+      event
+      |> trusted_event_failure_text(payload)
+      |> case do
+        nil ->
+          nil
 
-    [event_text, payload_text]
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join(" ")
-    |> classify_reason_text()
-    |> case do
-      :unknown_failure -> nil
-      classification -> classification
-    end
+        text ->
+          case classify_reason_text(text) do
+            :unknown_failure -> nil
+            classification -> classification
+          end
+      end
   end
 
   @spec max_retry_attempts_exceeded?(integer(), integer()) :: boolean()
@@ -135,6 +187,7 @@ defmodule SymphonyElixir.RunnerObserver do
 
   @spec suggested_action(classification() | nil) :: String.t()
   def suggested_action(:missing_tool), do: "Block the run, install or route the missing toolchain, then retry from the same issue workspace."
+  def suggested_action(:no_progress_budget_exceeded), do: "Stop the stale process, preserve the worktree, and inspect why no branch/file/PR progress occurred within budget."
   def suggested_action(:no_output_timeout), do: "Stop the stale process, preserve the worktree, and retry once with the same issue context."
   def suggested_action(:no_json_event_timeout), do: "Treat the app-server stream as unhealthy and restart the session after recording the last raw output."
   def suggested_action(:compaction_stall), do: "Resume the same issue with a compacted workpad summary and do not start unrelated work."
@@ -213,6 +266,139 @@ defmodule SymphonyElixir.RunnerObserver do
       end
     end)
   end
+
+  defp explicit_payload_classification(%{classification: classification}), do: known_classification_value(classification)
+  defp explicit_payload_classification(%{"classification" => classification}), do: known_classification_value(classification)
+  defp explicit_payload_classification(_payload), do: nil
+
+  defp known_classification_value(classification) when is_atom(classification) do
+    case known_classification(classification) do
+      :unknown_failure -> nil
+      known -> known
+    end
+  end
+
+  defp known_classification_value(classification) when is_binary(classification) do
+    case classification |> String.downcase() |> known_classification_name() do
+      :unknown_failure -> nil
+      known -> known
+    end
+  end
+
+  defp known_classification_value(_classification), do: nil
+
+  defp trusted_event_failure_text(event, payload) do
+    case normalize_event_name(event) do
+      :malformed ->
+        "malformed json"
+
+      :notification ->
+        notification_failure_text(payload)
+
+      :stderr ->
+        trusted_payload_reason(payload, include_raw?: true)
+
+      event
+      when event in [
+             :startup_failed,
+             :turn_ended_with_error,
+             :turn_failed,
+             :turn_cancelled,
+             :tool_call_failed,
+             :agent_message,
+             :unsupported_tool_call,
+             :turn_input_required,
+             :approval_required
+           ] ->
+        include_raw? = event in [:turn_input_required, :approval_required]
+
+        [Atom.to_string(event), trusted_payload_reason(payload, include_raw?: include_raw?)]
+        |> Enum.reject(&(&1 in [nil, ""]))
+        |> Enum.join(" ")
+
+      _event ->
+        nil
+    end
+  end
+
+  defp notification_failure_text(payload) do
+    text = normalize_reason(payload)
+
+    cond do
+      not command_execution_failed?(text) ->
+        nil
+
+      validation_failure_text?(text) ->
+        "validation failed #{text}"
+
+      true ->
+        "tool_call_failed #{text}"
+    end
+  end
+
+  defp command_execution_failed?(text) when is_binary(text) do
+    String.contains?(text, "command execution") and String.contains?(text, "failed")
+  end
+
+  defp validation_failure_text?(text) when is_binary(text) do
+    String.contains?(text, [
+      "mix test",
+      "exunit",
+      "test/",
+      "1 failure",
+      "2 failures",
+      "failed tests"
+    ])
+  end
+
+  defp normalize_event_name(event) when is_atom(event), do: event
+
+  defp normalize_event_name(event) when is_binary(event) do
+    event
+    |> String.trim()
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/, "_")
+    |> String.trim("_")
+    |> then(&Map.get(@trusted_event_names, &1))
+  end
+
+  defp normalize_event_name(_event), do: nil
+
+  defp trusted_payload_reason(payload, opts) when is_map(payload) do
+    include_raw? = Keyword.get(opts, :include_raw?, false)
+
+    keys =
+      [:classification, "classification", :reason, "reason", :error, "error", :details, "details", :message, "message"]
+
+    raw_keys = if include_raw?, do: [:payload, "payload", :raw, "raw"], else: []
+    nested_details = if include_raw?, do: trusted_nested_payload_details(payload), else: []
+
+    (keys ++ raw_keys)
+    |> Enum.map(&Map.get(payload, &1))
+    |> Kernel.++(nested_details)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&normalize_reason/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join(" ")
+  end
+
+  defp trusted_payload_reason(payload, _opts) when is_binary(payload), do: normalize_reason(payload)
+  defp trusted_payload_reason(payload, _opts), do: normalize_reason(payload)
+
+  defp trusted_nested_payload_details(payload) when is_map(payload) do
+    nested_payload = Map.get(payload, :payload) || Map.get(payload, "payload") || %{}
+
+    [
+      get_in(nested_payload, ["method"]),
+      get_in(nested_payload, ["params", "message"]),
+      get_in(nested_payload, ["params", "_meta", "codex_approval_kind"]),
+      get_in(nested_payload, ["params", "_meta", "connector_name"]),
+      get_in(nested_payload, ["params", "_meta", "tool_title"]),
+      get_in(nested_payload, ["params", "_meta", "tool_description"])
+    ]
+  end
+
+  defp trusted_nested_payload_details(_payload), do: []
 
   defp known_classification(classification) do
     if classification in @known_classifications do

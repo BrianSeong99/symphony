@@ -7,11 +7,11 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/brianseong/Develop/Labs/symphony/bin/symphony-native</string>
+    <string>/Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/bin/symphony-native</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/brianseong/Develop/Labs/symphony</string>
+  <string>/Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment</string>
 
   <key>RunAtLoad</key>
   <true/>

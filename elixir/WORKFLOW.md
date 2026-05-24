@@ -17,24 +17,56 @@ polling:
   interval_ms: 5000
 workspace:
   root: ~/Develop/Labs/symphony-workspaces
+  source_repo: ~/Develop/Labs/worktrees/symphony-homelab-deployment
+  base_ref: brian/main
+  branch_prefix: brian/symphony
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/BrianSeong99/symphony .
-    if command -v mise >/dev/null 2>&1; then
-      cd elixir && mise trust && mise exec -- mix deps.get
+    run_mix() {
+      if command -v mise >/dev/null 2>&1; then
+        mise trust
+        mise exec -- mix "$@"
+      else
+        mix "$@"
+      fi
+    }
+    if git remote get-url origin >/dev/null 2>&1; then
+      git remote set-url origin https://github.com/BrianSeong99/symphony.git
+    else
+      git remote add origin https://github.com/BrianSeong99/symphony.git
     fi
+    if git remote get-url upstream >/dev/null 2>&1; then
+      git remote set-url upstream https://github.com/openai/symphony.git
+    else
+      git remote add upstream https://github.com/openai/symphony.git
+    fi
+    git fetch origin main
+    cd elixir
+    run_mix deps.get
+  before_run: |
+    git_dir="$(git rev-parse --git-dir)"
+    common_dir="$(git rev-parse --git-common-dir)"
+    test "$git_dir" != "$common_dir"
   before_remove: |
-    cd elixir && mise exec -- mix workspace.before_remove
+    cd elixir
+    if command -v mise >/dev/null 2>&1; then
+      mise exec -- mix workspace.before_remove
+    else
+      mix workspace.before_remove
+    fi
 agent:
   max_concurrent_agents: 10
   max_turns: 20
   max_retry_attempts: 3
+  no_progress_timeout_ms: 90000
+  no_progress_max_tokens: 220000
+  prompt_mode: compact
 codex:
-  command: /Users/brianseong/.local/bin/codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
+  command: SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
   approval_policy: never
-  thread_sandbox: workspace-write
+  thread_sandbox: danger-full-access
   turn_sandbox_policy:
-    type: workspaceWrite
+    type: dangerFullAccess
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}`
@@ -50,7 +82,11 @@ use the stricter rule and record the decision in the workpad.
 Hard defaults from Brian's global guidance:
 
 - Do not add AI attribution to commits, PRs, issues, comments, README files, or other public copy.
-- Branches must be cut from `origin/main`; do not create stacked PRs.
+- Branches must be cut from the configured base ref; this deployment uses
+  `brian/main`. Do not create stacked PRs.
+- Publish runner branches to the configured fork remote. This deployment makes
+  `origin` point at `BrianSeong99/symphony` and keeps upstream as
+  `openai/symphony`.
 - All implementation and review work must happen in a git worktree created from `main`.
 - LAB issues are assigned to Brian by default, require no human review by default, and may self-merge once validation and review gates pass.
 - If a repo still defaults to `master`, rename it to `main` before feature work.
@@ -88,6 +124,7 @@ Continuation context:
   {% endif %}
 
 Issue context:
+Internal id: {{ issue.id }}
 Identifier: {{ issue.identifier }}
 Title: {{ issue.title }}
 Current status: {{ issue.state }}
@@ -116,19 +153,52 @@ should not assume optional MCP tools such as Notion are available, and missing
 optional MCP tools are not blockers. Use only the injected Symphony context,
 the repository checkout, GitHub where the project policy allows it, and the
 approved runner commands.
+Do not use GitHub connectors, app connectors, or MCP app tools for branch,
+commit, push, PR, review, or merge operations in unattended runner sessions.
+Use the local `git` and `gh` CLI from the worktree instead. Any connector
+approval prompt is a runner failure, not a human checkpoint.
+
+Do not use the `linear_graphql` dynamic tool during normal startup. The issue
+identifier, title, state, URL, labels, and description are already injected
+below. Symphony's backend writes run-log events such as `build.started`,
+`workspace.ready`, failure classifiers, retries, and blockers. Use
+`linear_graphql` only when a required field is missing from the injected
+context, when updating changed requirements before continuing, or when linking
+final PR/merge evidence cannot be handled by GitHub/linkbacks.
+When `linear_graphql` is truly required, query by the injected internal issue
+id with `issue(id: "...")`; Linear's issue filter does not support an
+`identifier` field.
+
+For Symphony Elixir validation, run commands from `elixir/`. Fresh worktrees
+must run `mix deps.get` before tests when dependencies are missing, and test
+commands should inherit `SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0`
+so validation cannot collide with the live native runner endpoint.
+For PR state checks, use:
+`gh pr view <number> --json number,title,state,mergeStateStatus,mergeable,headRefName,baseRefName,statusCheckRollup,url`.
+
+For small implementation tasks, first inspect or edit repository files within
+45 seconds of session start. Do not spend the opening turn creating or
+reconciling Linear workpads before touching the repository.
+If the issue names exact files, exact fixture content, or an exact validation
+command, implement that direct path before broad repository searches.
+Your first action after reading this prompt should be a repository command
+such as `pwd`, `git status --short`, `find`, `rg`, or opening the relevant
+guidance file. Do not spend the opening turn only reasoning.
+When publishing work, use the repo-local `commit`, `push`, and `land` skills
+only insofar as they route through local git and `gh` CLI commands.
 
 ## Default posture
 
-- Start by determining the ticket's current status, then follow the matching flow for that status.
-- Start every task by opening the tracking workpad comment and bringing it up to date before doing new implementation work.
+- Start from the injected ticket status below, then follow the matching flow for that status.
+- Let the Symphony backend own routine Linear run-log writeback; do not block repository progress on manual workpad edits.
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
 - Keep ticket metadata current (state, checklist, acceptance criteria, links).
 - Every planner, builder, reviewer, integrator, retry handler, blocker, and monitor update must be recorded in Linear before continuing.
 - If implementation reveals changed requirements, update the Linear issue/workpad first, then re-plan and continue in the same issue session.
 - Stop retry loops after three equivalent failed attempts; attempt four must block with classifier, evidence, and a concrete suggested action.
-- Treat a single persistent Linear comment as the source of truth for progress.
-- Use that single workpad comment for all progress and handoff notes; do not post separate "done"/summary comments.
+- Treat the issue description plus Symphony backend run log as the source of truth for progress.
+- Use a single Linear workpad comment only when requirements change, a blocker needs context, or validation evidence cannot be captured through PR/linkbacks.
 - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
 - When meaningful out-of-scope improvements are discovered during execution,
   file a separate Linear issue instead of expanding scope. The follow-up issue
@@ -145,7 +215,7 @@ approved runner commands.
 - `linear`: interact with Linear.
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
-- `pull`: keep branch updated with latest `origin/main` before handoff.
+- `pull`: keep branch updated with latest configured base ref before handoff.
 - `land`: when ticket reaches `Merging`, explicitly open and follow `.codex/skills/land/SKILL.md`, which includes the `land` loop.
 
 ## Status map
@@ -161,11 +231,11 @@ approved runner commands.
 
 ## Step 0: Determine current ticket state and route
 
-1. Fetch the issue by explicit ticket ID.
-2. Read the current state.
+1. Use the injected issue context in this prompt as the current source of truth.
+2. Do not fetch the issue through Linear unless an essential field is missing or conflicting.
 3. Route to the matching flow:
    - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Todo`.
-   - `Todo` -> immediately move to `In Progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
+   - `Todo` -> start execution flow immediately. If status transitions are available without delaying repo work, move it to `In Progress`; otherwise continue and let Symphony backend logs show progress.
      - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
    - `In Progress` -> continue execution flow from current scratchpad comment.
    - `Human Review` -> wait and poll for decision/review updates.
@@ -174,43 +244,30 @@ approved runner commands.
    - `Done` -> do nothing and shut down.
 4. Check whether a PR already exists for the current branch and whether it is closed.
    - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
-   - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
-5. For `Todo` tickets, do startup sequencing in this exact order:
-   - `update_issue(..., state: "In Progress")`
-   - find/create `## Codex Workpad` bootstrap comment
-   - only then begin analysis/planning/implementation work.
-6. Add a short comment if state and issue content are inconsistent, then proceed with the safest flow.
+   - Create a fresh branch from the configured base ref and restart execution flow as a new attempt.
+5. Add a short Linear note only if state and issue content are inconsistent, then proceed with the safest flow.
 
 ## Step 1: Start/continue execution (Todo or In Progress)
 
-1.  Find or create a single persistent scratchpad comment for the issue:
-    - Search existing comments for a marker header: `## Codex Workpad`.
-    - Ignore resolved comments while searching; only active/unresolved comments are eligible to be reused as the live workpad.
-    - If found, reuse that comment; do not create a new workpad comment.
-    - If not found, create one workpad comment and use it for all updates.
-    - Persist the workpad comment ID and only write progress updates to that ID.
-2.  If arriving from `Todo`, do not delay on additional status transitions: the issue should already be `In Progress` before this step begins.
-3.  Immediately reconcile the workpad before new edits:
-    - Check off items that are already done.
-    - Expand/fix the plan so it is comprehensive for current scope.
-    - Ensure `Acceptance Criteria` and `Validation` are current and still make sense for the task.
-4.  Start work by writing/updating a hierarchical plan in the workpad comment.
-5.  Ensure the workpad includes a compact environment stamp at the top as a code fence line:
-    - Format: `<host>:<abs-workdir>@<short-sha>`
-    - Example: `devbox-01:/home/dev-user/code/symphony-workspaces/MT-32@7bdde33bc`
-    - Do not include metadata already inferable from Linear issue fields (`issue ID`, `status`, `branch`, `PR link`).
-6.  Add explicit acceptance criteria and TODOs in checklist form in the same comment.
+1.  Verify the current directory is a real git worktree:
+    - `git rev-parse --git-dir`
+    - `git rev-parse --git-common-dir`
+    - these paths must differ.
+2.  Read the nearest applicable repo guidance files before edits.
+3.  Build a compact local plan from the injected description and validation section.
+4.  Start repository work before optional Linear workpad updates. For small tasks, this means reading target files or making the first edit immediately after guidance review.
+5.  Keep explicit acceptance criteria and TODOs in local notes or PR body.
     - If changes are user-facing, include a UI walkthrough acceptance criterion that describes the end-to-end user path to validate.
     - If changes touch app files or app behavior, add explicit app-specific flow checks to `Acceptance Criteria` in the workpad (for example: launch path, changed interaction path, and expected result path).
     - If the ticket description/comment context includes `Validation`, `Test Plan`, or `Testing` sections, copy those requirements into the workpad `Acceptance Criteria` and `Validation` sections as required checkboxes (no optional downgrade).
-7.  Run a principal-style self-review of the plan and refine it in the comment.
-8.  Before implementing, capture a concrete reproduction signal and record it in the workpad `Notes` section (command/output, screenshot, or deterministic UI behavior).
-9.  Run the `pull` skill to sync with latest `origin/main` before any code edits, then record the pull/sync result in the workpad `Notes`.
+6.  Run a principal-style self-review of the plan and refine it before implementation.
+7.  Before implementing, capture a concrete reproduction signal where applicable.
+8.  Run the `pull` skill or equivalent `git fetch`/base sync before code edits.
     - Include a `pull skill evidence` note with:
       - merge source(s),
       - result (`clean` or `conflicts resolved`),
       - resulting `HEAD` short SHA.
-10. Compact context and proceed to execution.
+9.  Proceed to execution. Update Linear only for changed requirements, blockers, or final evidence that is not already captured by backend run logs/PR links.
 
 ## PR feedback sweep protocol (required)
 
@@ -264,7 +321,8 @@ Use this only when completion is blocked by missing required tools or missing au
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
 8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
     - Ensure the GitHub PR has label `symphony` (add it if missing).
-9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
+    - For this deployment, push with `git push -u "${SYMPHONY_GIT_PUSH_REMOTE:-origin}" HEAD` and create/view PRs with `gh ... --repo "${SYMPHONY_GITHUB_REPO:-BrianSeong99/symphony}" --base "${SYMPHONY_GITHUB_BASE:-main}"`.
+9.  Merge latest configured base ref into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
     - Add final handoff notes (commit + validation summary) in the same workpad comment.
@@ -278,7 +336,9 @@ Use this only when completion is blocked by missing required tools or missing au
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-12. Only then move issue to `Human Review`.
+12. For LAB issues, continue directly into the merge flow after validation,
+    PR checks, and reviewer gates pass; no human review is required. For
+    non-LAB issues, only then move issue to `Human Review`.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
 13. For `Todo` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
@@ -300,7 +360,7 @@ Use this only when completion is blocked by missing required tools or missing au
 2. Re-read the full issue body and all human comments; explicitly identify what will be done differently this attempt.
 3. Close the existing PR tied to the issue.
 4. Remove the existing `## Codex Workpad` comment from the issue.
-5. Create a fresh branch from `origin/main`.
+5. Create a fresh branch from the configured base ref.
 6. Start over from the normal kickoff flow:
    - If current issue state is `Todo`, move it to `In Progress`; otherwise keep the current state.
    - Create a new bootstrap `## Codex Workpad` comment.
@@ -319,7 +379,7 @@ Use this only when completion is blocked by missing required tools or missing au
 ## Guardrails
 
 - If the branch PR is already closed/merged, do not reuse that branch or prior implementation state for continuation.
-- For closed/merged branch PRs, create a new branch from `origin/main` and restart from reproduction/planning as if starting fresh.
+- For closed/merged branch PRs, create a new branch from the configured base ref and restart from reproduction/planning as if starting fresh.
 - If issue state is `Backlog`, do not modify it; wait for human to move to `Todo`.
 - Do not edit the issue body/description for planning or progress tracking.
 - Use exactly one persistent workpad comment (`## Codex Workpad`) per issue.

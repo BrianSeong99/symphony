@@ -28,10 +28,10 @@ defmodule SymphonyElixir.Application do
         {Phoenix.PubSub, name: SymphonyElixir.PubSub},
         {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
         SymphonyElixir.WorkflowStore,
-        SymphonyElixir.Orchestrator,
         SymphonyElixir.HttpServer,
         SymphonyElixir.StatusDashboard
       ]
+      |> maybe_prepend_orchestrator()
       |> maybe_prepend_repo()
 
     Supervisor.start_link(
@@ -55,8 +55,23 @@ defmodule SymphonyElixir.Application do
     end
   end
 
+  defp maybe_prepend_orchestrator(children) do
+    if runner_enabled?() do
+      [SymphonyElixir.Orchestrator | children]
+    else
+      children
+    end
+  end
+
   defp repo_enabled? do
     case System.get_env("SYMPHONY_REPO_ENABLED", "true") |> String.downcase() do
+      value when value in ["0", "false", "no", "off"] -> false
+      _ -> true
+    end
+  end
+
+  defp runner_enabled? do
+    case System.get_env("SYMPHONY_RUNNER_ENABLED", "true") |> String.downcase() do
       value when value in ["0", "false", "no", "off"] -> false
       _ -> true
     end

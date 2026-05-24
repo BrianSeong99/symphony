@@ -3,7 +3,7 @@ name: symphony
 services:
   db:
     image: postgres:17-alpine
-    restart: unless-stopped
+    restart: "no"
     environment:
       POSTGRES_USER: symphony
       POSTGRES_PASSWORD: symphony
@@ -21,7 +21,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: brian-symphony:local
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       db:
         condition: service_healthy
@@ -35,6 +35,7 @@ services:
       SYMPHONY_SERVER_HOST: 0.0.0.0
       SYMPHONY_SERVER_PORT: "4000"
       SYMPHONY_MIGRATE: "true"
+      SYMPHONY_RUNNER_ENABLED: "false"
       LINEAR_API_KEY: ${LINEAR_API_KEY:?set LINEAR_API_KEY in .env}
       LINEAR_ASSIGNEE: ${LINEAR_ASSIGNEE:-me}
     healthcheck:

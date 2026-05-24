@@ -12,6 +12,22 @@ defmodule SymphonyElixir.Orchestrator do
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
+  @dirty_progress_timeout_multiplier 2
+  @dirty_progress_token_multiplier 3
+  @committed_progress_timeout_multiplier 4
+  @committed_progress_token_multiplier 5
+  @normal_completion_blocking_classifications MapSet.new([
+                                                :auth_failure,
+                                                :budget_exhausted,
+                                                :external_service_failure,
+                                                :max_retry_attempts_exceeded,
+                                                :max_turns_exceeded,
+                                                :missing_tool,
+                                                :no_progress_budget_exceeded,
+                                                :permission_denied_loop,
+                                                :requirements_mismatch,
+                                                :validation_failure_repeat
+                                              ])
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @empty_codex_totals %{
@@ -146,10 +162,13 @@ defmodule SymphonyElixir.Orchestrator do
         {:noreply, state}
 
       running_entry ->
+        now = DateTime.utc_now()
+
         updated_running_entry =
           running_entry
           |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
           |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
+          |> put_workspace_progress_baseline(now)
 
         notify_dashboard()
         {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
@@ -199,19 +218,24 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_agent_down(:normal, state, issue_id, running_entry, session_id) do
-    if input_required_blocker?(running_entry) do
-      block_input_required_agent_down(state, issue_id, running_entry, session_id, :normal)
-    else
-      Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
+    cond do
+      input_required_blocker?(running_entry) ->
+        block_input_required_agent_down(state, issue_id, running_entry, session_id, :normal)
 
-      state
-      |> complete_issue(issue_id)
-      |> schedule_issue_retry(issue_id, 1, %{
-        identifier: running_entry.identifier,
-        delay_type: :continuation,
-        worker_host: Map.get(running_entry, :worker_host),
-        workspace_path: Map.get(running_entry, :workspace_path)
-      })
+      classification = normal_completion_blocking_classification(running_entry) ->
+        block_normal_completion_agent_down(state, issue_id, running_entry, session_id, classification)
+
+      true ->
+        Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
+
+        state
+        |> complete_issue(issue_id)
+        |> schedule_issue_retry(issue_id, 1, %{
+          identifier: running_entry.identifier,
+          delay_type: :continuation,
+          worker_host: Map.get(running_entry, :worker_host),
+          workspace_path: Map.get(running_entry, :workspace_path)
+        })
     end
   end
 
@@ -227,6 +251,20 @@ defmodule SymphonyElixir.Orchestrator do
     error = blocker_error(running_entry, "agent exited: #{inspect(reason)}")
 
     Logger.warning("Agent task blocked for issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} session_id=#{session_id}: #{error}")
+
+    block_issue_from_entry(state, issue_id, running_entry, error)
+  end
+
+  defp block_normal_completion_agent_down(state, issue_id, running_entry, session_id, classification) do
+    error = "agent completed with blocking classification=#{classification}"
+
+    Logger.warning("Agent task blocked after normal completion for issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} session_id=#{session_id}: #{error}")
+
+    running_entry =
+      running_entry
+      |> Map.put(:classification, classification)
+      |> Map.put(:failure_fingerprint, RunnerObserver.failure_fingerprint(error, classification))
+      |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
 
     block_issue_from_entry(state, issue_id, running_entry, error)
   end
@@ -305,7 +343,11 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp reconcile_running_issues(%State{} = state) do
-    state = reconcile_stalled_running_issues(state)
+    state =
+      state
+      |> reconcile_stalled_running_issues()
+      |> reconcile_no_progress_running_issues()
+
     running_ids = Map.keys(state.running)
 
     if running_ids == [] do
@@ -328,6 +370,10 @@ defmodule SymphonyElixir.Orchestrator do
       end
     end
   end
+
+  @doc false
+  @spec reconcile_no_progress_running_issues_for_test(term()) :: term()
+  def reconcile_no_progress_running_issues_for_test(%State{} = state), do: reconcile_no_progress_running_issues(state)
 
   defp reconcile_blocked_issues(%State{} = state) do
     blocked_ids = Map.keys(state.blocked)
@@ -404,6 +450,8 @@ defmodule SymphonyElixir.Orchestrator do
     cond do
       terminal_issue_state?(issue.state, terminal_states) ->
         Logger.info("Issue moved to terminal state: #{issue_context(issue)} state=#{issue.state}; stopping active agent")
+
+        state = maybe_log_terminal_running_issue(state, issue)
 
         terminate_running_issue(state, issue.id, true)
 
@@ -535,6 +583,63 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  defp maybe_log_terminal_running_issue(%State{} = state, %Issue{id: issue_id} = issue) do
+    case Map.get(state.running, issue_id) do
+      nil ->
+        state
+
+      running_entry ->
+        event = terminal_run_log_event(issue.state)
+
+        attrs = %{
+          role: :runner,
+          stage: "issue.terminal",
+          terminal_state: issue.state,
+          session_id: running_entry_session_id(running_entry),
+          worktree: Map.get(running_entry, :workspace_path),
+          branch: workspace_branch(Map.get(running_entry, :workspace_path)),
+          cleanup_workspace: true,
+          retry_attempt: Map.get(running_entry, :retry_attempt),
+          equivalent_attempt: Map.get(running_entry, :equivalent_attempt),
+          turn_count: Map.get(running_entry, :turn_count),
+          runtime_seconds: running_seconds(Map.get(running_entry, :started_at), DateTime.utc_now()),
+          total_tokens: Map.get(running_entry, :codex_total_tokens),
+          uncached_tokens: Map.get(running_entry, :codex_uncached_total_tokens),
+          last_event: Map.get(running_entry, :last_codex_event),
+          last_event_at: Map.get(running_entry, :last_codex_timestamp)
+        }
+
+        case RunLog.log(issue, event, attrs) do
+          :ok ->
+            state
+
+          {:error, reason} ->
+            Logger.warning("Failed to write terminal run log #{issue_context(issue)} event=#{event}: #{inspect(reason)}")
+            state
+        end
+    end
+  end
+
+  defp terminal_run_log_event(state) when is_binary(state) do
+    case String.downcase(String.trim(state)) do
+      "done" -> :"merge.done"
+      _state -> :"build.progress"
+    end
+  end
+
+  defp terminal_run_log_event(_state), do: :"build.progress"
+
+  defp workspace_branch(workspace) when is_binary(workspace) do
+    if File.dir?(workspace) do
+      case System.cmd("git", ["-C", workspace, "branch", "--show-current"], stderr_to_stdout: true) do
+        {branch, 0} -> String.trim(branch)
+        {_output, _status} -> nil
+      end
+    end
+  end
+
+  defp workspace_branch(_workspace), do: nil
+
   defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace) do
     case Map.get(state.running, issue_id) do
       nil ->
@@ -579,6 +684,284 @@ defmodule SymphonyElixir.Orchestrator do
         Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
           maybe_restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
         end)
+    end
+  end
+
+  defp reconcile_no_progress_running_issues(%State{} = state) do
+    settings = Config.settings!().agent
+    timeout_ms = settings.no_progress_timeout_ms
+    max_tokens = settings.no_progress_max_tokens
+
+    cond do
+      timeout_ms <= 0 and max_tokens <= 0 ->
+        state
+
+      map_size(state.running) == 0 ->
+        state
+
+      true ->
+        now = DateTime.utc_now()
+
+        Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
+          maybe_block_no_progress_issue(state_acc, issue_id, running_entry, now, timeout_ms, max_tokens)
+        end)
+    end
+  end
+
+  defp maybe_block_no_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens) do
+    if Map.has_key?(state.blocked, issue_id) do
+      state
+    else
+      case refresh_workspace_progress_state(state, issue_id, running_entry, now) do
+        {:changed, state} ->
+          state
+
+        {:current, state, running_entry, :branch_commits} ->
+          maybe_block_committed_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens)
+
+        {:current, state, running_entry, :uncommitted_changes} ->
+          maybe_block_dirty_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens)
+
+        {:current, state, running_entry, :none} ->
+          maybe_block_progress_budget_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens, :time, :tokens)
+      end
+    end
+  end
+
+  defp maybe_block_dirty_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens) do
+    dirty_timeout_ms = multiply_positive(timeout_ms, @dirty_progress_timeout_multiplier)
+    dirty_max_tokens = multiply_positive(max_tokens, @dirty_progress_token_multiplier)
+
+    maybe_block_progress_budget_issue(
+      state,
+      issue_id,
+      running_entry,
+      now,
+      dirty_timeout_ms,
+      dirty_max_tokens,
+      :dirty_time,
+      :dirty_tokens
+    )
+  end
+
+  defp maybe_block_committed_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens) do
+    committed_timeout_ms = multiply_positive(timeout_ms, @committed_progress_timeout_multiplier)
+    committed_max_tokens = multiply_positive(max_tokens, @committed_progress_token_multiplier)
+
+    maybe_block_progress_budget_issue(
+      state,
+      issue_id,
+      running_entry,
+      now,
+      committed_timeout_ms,
+      committed_max_tokens,
+      :committed_time,
+      :committed_tokens
+    )
+  end
+
+  defp maybe_block_progress_budget_issue(
+         state,
+         issue_id,
+         running_entry,
+         now,
+         timeout_ms,
+         max_tokens,
+         time_trigger,
+         token_trigger
+       ) do
+    elapsed_ms = running_elapsed_ms(running_entry, now)
+    total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+    effective_tokens = no_progress_token_total(running_entry, total_tokens)
+    progress_tokens = workspace_progress_tokens(running_entry, effective_tokens)
+
+    cond do
+      timeout_ms > 0 and is_integer(elapsed_ms) and elapsed_ms > timeout_ms ->
+        block_no_progress_issue(
+          state,
+          issue_id,
+          running_entry,
+          elapsed_ms,
+          progress_tokens,
+          total_tokens,
+          time_trigger
+        )
+
+      max_tokens > 0 and is_integer(progress_tokens) and progress_tokens > max_tokens ->
+        block_no_progress_issue(
+          state,
+          issue_id,
+          running_entry,
+          elapsed_ms,
+          progress_tokens,
+          total_tokens,
+          token_trigger
+        )
+
+      true ->
+        state
+    end
+  end
+
+  defp block_no_progress_issue(state, issue_id, running_entry, elapsed_ms, progress_tokens, total_tokens, trigger) do
+    identifier = Map.get(running_entry, :identifier, issue_id)
+    session_id = running_entry_session_id(running_entry)
+    classification = :no_progress_budget_exceeded
+
+    reason =
+      "no_progress_budget_exceeded trigger=#{trigger} elapsed_ms=#{elapsed_ms || "n/a"} " <>
+        "progress_tokens=#{progress_tokens || 0} total_tokens=#{total_tokens || 0}"
+
+    failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
+
+    Logger.warning("Issue blocked by no-progress budget: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} #{reason}")
+
+    running_entry =
+      running_entry
+      |> Map.put(:classification, classification)
+      |> Map.put(:failure_fingerprint, failure_fingerprint)
+      |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
+
+    state
+    |> record_session_completion_totals(running_entry)
+    |> stop_and_block_issue(issue_id, running_entry, reason)
+  end
+
+  defp running_elapsed_ms(running_entry, now) do
+    case Map.get(running_entry, :workspace_progress_changed_at) || Map.get(running_entry, :started_at) do
+      %DateTime{} = started_at -> max(0, DateTime.diff(now, started_at, :millisecond))
+      _ -> nil
+    end
+  end
+
+  defp workspace_progress_tokens(running_entry, total_tokens) do
+    baseline_tokens = Map.get(running_entry, :workspace_progress_tokens, 0)
+
+    cond do
+      not is_integer(total_tokens) -> 0
+      not is_integer(baseline_tokens) -> total_tokens
+      true -> max(0, total_tokens - baseline_tokens)
+    end
+  end
+
+  defp put_workspace_progress_baseline(running_entry, now) when is_map(running_entry) do
+    case git_workspace_progress_snapshot(Map.get(running_entry, :workspace_path)) do
+      %{signature: signature} ->
+        running_entry
+        |> Map.put(:workspace_progress_signature, signature)
+        |> Map.put(:workspace_progress_changed_at, now)
+        |> Map.put(:workspace_progress_tokens, no_progress_token_total(running_entry))
+
+      nil ->
+        running_entry
+    end
+  end
+
+  defp put_workspace_progress_baseline(running_entry, _now), do: running_entry
+
+  defp refresh_workspace_progress_state(state, issue_id, running_entry, now) do
+    case git_workspace_progress_snapshot(Map.get(running_entry, :workspace_path)) do
+      nil ->
+        {:current, state, running_entry, :none}
+
+      %{state: progress_state, signature: signature} ->
+        refresh_workspace_progress_signature(state, issue_id, running_entry, now, progress_state, signature)
+    end
+  end
+
+  defp refresh_workspace_progress_signature(state, issue_id, running_entry, now, progress_state, signature) do
+    case Map.get(running_entry, :workspace_progress_signature) do
+      nil ->
+        updated_running_entry =
+          running_entry
+          |> Map.put(:workspace_progress_signature, signature)
+          |> Map.put_new(:workspace_progress_changed_at, Map.get(running_entry, :started_at))
+          |> Map.put_new(:workspace_progress_tokens, 0)
+
+        {:current, put_running_entry(state, issue_id, updated_running_entry), updated_running_entry, progress_state}
+
+      ^signature ->
+        {:current, state, running_entry, progress_state}
+
+      _previous_signature ->
+        updated_running_entry =
+          running_entry
+          |> Map.put(:workspace_progress_signature, signature)
+          |> Map.put(:workspace_progress_changed_at, now)
+          |> Map.put(:workspace_progress_tokens, no_progress_token_total(running_entry))
+
+        Logger.info("Workspace progress advanced for issue_id=#{issue_id} issue_identifier=#{Map.get(running_entry, :identifier, issue_id)}; resetting no-progress budget")
+
+        {:changed, put_running_entry(state, issue_id, updated_running_entry)}
+    end
+  end
+
+  defp put_running_entry(%State{} = state, issue_id, running_entry) do
+    %{state | running: Map.put(state.running, issue_id, running_entry)}
+  end
+
+  defp no_progress_token_total(running_entry, total_tokens \\ nil) do
+    cond do
+      is_integer(Map.get(running_entry, :codex_uncached_total_tokens)) ->
+        Map.get(running_entry, :codex_uncached_total_tokens)
+
+      is_integer(total_tokens) ->
+        total_tokens
+
+      true ->
+        Map.get(running_entry, :codex_total_tokens, 0)
+    end
+  end
+
+  defp git_workspace_progress_snapshot(workspace) when is_binary(workspace) do
+    if File.dir?(workspace) do
+      branch = git_output(workspace, ["branch", "--show-current"]) || "unknown"
+      status = git_output(workspace, ["status", "--porcelain=v1"]) || ""
+      branch_commit_count = git_branch_commit_count(workspace)
+
+      progress_state =
+        cond do
+          branch_commit_count > 0 -> :branch_commits
+          String.trim(status) != "" -> :uncommitted_changes
+          true -> :none
+        end
+
+      signature =
+        :crypto.hash(:sha256, [branch, "\0", Integer.to_string(branch_commit_count), "\0", status])
+        |> Base.encode16(case: :lower)
+
+      %{state: progress_state, signature: signature}
+    else
+      nil
+    end
+  end
+
+  defp git_workspace_progress_snapshot(_workspace), do: nil
+
+  defp multiply_positive(value, multiplier) when is_integer(value) and value > 0 and is_integer(multiplier),
+    do: value * multiplier
+
+  defp multiply_positive(_value, _multiplier), do: 0
+
+  defp git_output(workspace, args) do
+    case System.cmd("git", ["-C", workspace | args], stderr_to_stdout: true) do
+      {output, 0} -> String.trim_trailing(output)
+      {_output, _status} -> nil
+    end
+  end
+
+  defp git_branch_commit_count(workspace) do
+    base_ref = Config.settings!().workspace.base_ref
+
+    case System.cmd("git", ["-C", workspace, "rev-list", "--count", "#{base_ref}..HEAD"], stderr_to_stdout: true) do
+      {output, 0} ->
+        case Integer.parse(String.trim(output)) do
+          {count, _rest} -> count
+          :error -> 0
+        end
+
+      {_output, _status} ->
+        0
     end
   end
 
@@ -655,6 +1038,29 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp input_required_blocker?(_running_entry), do: false
+
+  defp normal_completion_blocking_classification(running_entry) when is_map(running_entry) do
+    [
+      Map.get(running_entry, :classification),
+      classify_completion_text(Map.get(running_entry, :last_codex_message))
+    ]
+    |> Enum.find(&blocking_normal_completion_classification?/1)
+  end
+
+  defp normal_completion_blocking_classification(_running_entry), do: nil
+
+  defp classify_completion_text(nil), do: nil
+
+  defp classify_completion_text(text) do
+    case RunnerObserver.classify_failure(text) do
+      :unknown_failure -> nil
+      classification -> classification
+    end
+  end
+
+  defp blocking_normal_completion_classification?(classification) do
+    MapSet.member?(@normal_completion_blocking_classifications, classification)
+  end
 
   defp input_required_completion_outcome(completion) when is_map(completion) do
     outcome = Map.get(completion, :outcome) || Map.get(completion, "outcome")
@@ -982,9 +1388,12 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_event: nil,
           codex_app_server_pid: nil,
           codex_input_tokens: 0,
+          codex_cached_input_tokens: 0,
           codex_output_tokens: 0,
           codex_total_tokens: 0,
+          codex_uncached_total_tokens: 0,
           codex_last_reported_input_tokens: 0,
+          codex_last_reported_cached_input_tokens: 0,
           codex_last_reported_output_tokens: 0,
           codex_last_reported_total_tokens: 0,
           turn_count: 0,
@@ -1675,6 +2084,20 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  @spec cancel_issue(String.t(), String.t()) :: {:ok, map()} | {:error, :not_running | :unavailable}
+  def cancel_issue(issue_id, reason \\ "operator_cancelled") do
+    cancel_issue(__MODULE__, issue_id, reason)
+  end
+
+  @spec cancel_issue(GenServer.server(), String.t(), String.t()) :: {:ok, map()} | {:error, :not_running | :unavailable}
+  def cancel_issue(server, issue_id, reason) when is_binary(issue_id) and is_binary(reason) do
+    if Process.whereis(server) do
+      GenServer.call(server, {:cancel_issue, issue_id, reason})
+    else
+      {:error, :unavailable}
+    end
+  end
+
   @spec snapshot() :: map() | :timeout | :unavailable
   def snapshot, do: snapshot(__MODULE__, 15_000)
 
@@ -1795,16 +2218,44 @@ defmodule SymphonyElixir.Orchestrator do
      }, state}
   end
 
+  def handle_call({:cancel_issue, issue_id, reason}, _from, state) when is_binary(issue_id) do
+    case Map.get(state.running, issue_id) do
+      nil ->
+        {:reply, {:error, :not_running}, state}
+
+      running_entry ->
+        cancelled_at = DateTime.utc_now()
+        error = "operator_cancelled: #{reason}"
+
+        updated_state =
+          state
+          |> record_session_completion_totals(running_entry)
+          |> stop_and_block_issue(issue_id, running_entry, error)
+
+        {:reply,
+         {:ok,
+          %{
+            issue_id: issue_id,
+            identifier: Map.get(running_entry, :identifier, issue_id),
+            cancelled_at: cancelled_at,
+            reason: reason
+          }}, updated_state}
+    end
+  end
+
   defp blocked_issue_state(%{issue: %Issue{state: state}}), do: state
   defp blocked_issue_state(_metadata), do: nil
 
   defp integrate_codex_update(running_entry, %{event: event, timestamp: timestamp} = update) do
     token_delta = extract_token_delta(running_entry, update)
     codex_input_tokens = Map.get(running_entry, :codex_input_tokens, 0)
+    codex_cached_input_tokens = Map.get(running_entry, :codex_cached_input_tokens, 0)
     codex_output_tokens = Map.get(running_entry, :codex_output_tokens, 0)
     codex_total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+    codex_uncached_total_tokens = Map.get(running_entry, :codex_uncached_total_tokens, 0)
     codex_app_server_pid = Map.get(running_entry, :codex_app_server_pid)
     last_reported_input = Map.get(running_entry, :codex_last_reported_input_tokens, 0)
+    last_reported_cached_input = Map.get(running_entry, :codex_last_reported_cached_input_tokens, 0)
     last_reported_output = Map.get(running_entry, :codex_last_reported_output_tokens, 0)
     last_reported_total = Map.get(running_entry, :codex_last_reported_total_tokens, 0)
     turn_count = Map.get(running_entry, :turn_count, 0)
@@ -1820,9 +2271,12 @@ defmodule SymphonyElixir.Orchestrator do
         last_codex_event: event,
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
         codex_input_tokens: codex_input_tokens + token_delta.input_tokens,
+        codex_cached_input_tokens: codex_cached_input_tokens + token_delta.cached_input_tokens,
         codex_output_tokens: codex_output_tokens + token_delta.output_tokens,
         codex_total_tokens: codex_total_tokens + token_delta.total_tokens,
+        codex_uncached_total_tokens: codex_uncached_total_tokens + token_delta.effective_total_tokens,
         codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
+        codex_last_reported_cached_input_tokens: max(last_reported_cached_input, token_delta.cached_input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
         turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
@@ -2041,37 +2495,49 @@ defmodule SymphonyElixir.Orchestrator do
     running_entry = running_entry || %{}
     usage = extract_token_usage(update)
 
-    {
+    input =
       compute_token_delta(
         running_entry,
         :input,
         usage,
         :codex_last_reported_input_tokens
-      ),
+      )
+
+    cached_input =
+      compute_token_delta(
+        running_entry,
+        :cached_input,
+        usage,
+        :codex_last_reported_cached_input_tokens
+      )
+
+    output =
       compute_token_delta(
         running_entry,
         :output,
         usage,
         :codex_last_reported_output_tokens
-      ),
+      )
+
+    total =
       compute_token_delta(
         running_entry,
         :total,
         usage,
         :codex_last_reported_total_tokens
       )
+
+    %{
+      input_tokens: input.delta,
+      cached_input_tokens: cached_input.delta,
+      output_tokens: output.delta,
+      total_tokens: total.delta,
+      effective_total_tokens: max(input.delta - cached_input.delta, 0) + output.delta,
+      input_reported: input.reported,
+      cached_input_reported: cached_input.reported,
+      output_reported: output.reported,
+      total_reported: total.reported
     }
-    |> Tuple.to_list()
-    |> then(fn [input, output, total] ->
-      %{
-        input_tokens: input.delta,
-        output_tokens: output.delta,
-        total_tokens: total.delta,
-        input_reported: input.reported,
-        output_reported: output.reported,
-        total_reported: total.reported
-      }
-    end)
   end
 
   defp compute_token_delta(running_entry, token_key, usage, reported_key) do
@@ -2242,21 +2708,25 @@ defmodule SymphonyElixir.Orchestrator do
       :input_tokens,
       :output_tokens,
       :total_tokens,
+      :cached_input_tokens,
       :prompt_tokens,
       :completion_tokens,
       :inputTokens,
       :outputTokens,
       :totalTokens,
+      :cachedInputTokens,
       :promptTokens,
       :completionTokens,
       "input_tokens",
       "output_tokens",
       "total_tokens",
+      "cached_input_tokens",
       "prompt_tokens",
       "completion_tokens",
       "inputTokens",
       "outputTokens",
       "totalTokens",
+      "cachedInputTokens",
       "promptTokens",
       "completionTokens"
     ]
@@ -2280,6 +2750,15 @@ defmodule SymphonyElixir.Orchestrator do
         :promptTokens,
         "inputTokens",
         :inputTokens
+      ])
+
+  defp get_token_usage(usage, :cached_input),
+    do:
+      payload_get(usage, [
+        "cached_input_tokens",
+        :cached_input_tokens,
+        "cachedInputTokens",
+        :cachedInputTokens
       ])
 
   defp get_token_usage(usage, :output),
