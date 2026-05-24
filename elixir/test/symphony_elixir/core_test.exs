@@ -1291,6 +1291,8 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "Do not use GitHub connectors"
     assert prompt =~ "Use local `git` and `gh` CLI"
     assert prompt =~ "inspect or edit repository files within 45 seconds"
+    assert prompt =~ "If the issue names exact files"
+    assert prompt =~ "Publish with `${SYMPHONY_GIT_PUSH_REMOTE:-origin}`"
     assert prompt =~ "first action after reading this prompt should be a repository command"
     refute prompt =~ "## Step 0"
     refute prompt =~ "Codex Workpad"
