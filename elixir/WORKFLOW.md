@@ -47,7 +47,7 @@ agent:
   max_turns: 20
   max_retry_attempts: 3
   no_progress_timeout_ms: 90000
-  no_progress_max_tokens: 100000
+  no_progress_max_tokens: 220000
   prompt_mode: compact
 codex:
   command: SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
@@ -156,6 +156,8 @@ final PR/merge evidence cannot be handled by GitHub/linkbacks.
 For small implementation tasks, first inspect or edit repository files within
 45 seconds of session start. Do not spend the opening turn creating or
 reconciling Linear workpads before touching the repository.
+If the issue names exact files, exact fixture content, or an exact validation
+command, implement that direct path before broad repository searches.
 Your first action after reading this prompt should be a repository command
 such as `pwd`, `git status --short`, `find`, `rg`, or opening the relevant
 guidance file. Do not spend the opening turn only reasoning.

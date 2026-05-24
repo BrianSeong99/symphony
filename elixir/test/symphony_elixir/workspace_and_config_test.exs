@@ -106,11 +106,13 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
         workspace_root: workspace_root,
         workspace_source_repo: source_repo,
         workspace_base_ref: "main",
-        workspace_branch_prefix: "test/symphony"
+        workspace_branch_prefix: "test/symphony",
+        hook_after_create: "printf recreated > .after_create_marker"
       )
 
       assert {:ok, recreated_workspace} = Workspace.create_for_issue("LAB-60")
       assert String.ends_with?(recreated_workspace, "/workspaces/LAB-60")
+      assert File.read!(Path.join(recreated_workspace, ".after_create_marker")) == "recreated"
 
       assert {"test/symphony/LAB-60\n", 0} =
                System.cmd("git", ["-C", recreated_workspace, "branch", "--show-current"])

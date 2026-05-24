@@ -115,16 +115,16 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp ensure_git_worktree_workspace(workspace, source_repo, safe_id, issue_context) do
-    existing_worktree? = git_worktree?(workspace)
+    branch = worktree_branch_name(safe_id)
+    expected_worktree? = git_worktree?(workspace) and git_current_branch(workspace) == branch
 
     with :ok <- validate_git_source_repo(source_repo),
          :ok <- prepare_git_worktree_path(workspace),
          :ok <- maybe_fetch_git_base_ref(source_repo),
-         branch <- worktree_branch_name(safe_id),
          :ok <- create_git_worktree(source_repo, workspace, branch, Config.settings!().workspace.base_ref),
          :ok <- verify_git_worktree(workspace) do
       Logger.info("Workspace ready as git worktree #{issue_log_context(issue_context)} workspace=#{workspace} source_repo=#{source_repo} branch=#{branch}")
-      {:ok, workspace, !existing_worktree?, :git_worktree}
+      {:ok, workspace, !expected_worktree?, :git_worktree}
     end
   end
 
