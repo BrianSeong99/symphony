@@ -226,6 +226,17 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <section class="section-card">
           <div class="section-header">
             <div>
+              <h2 class="section-title">Runner ownership</h2>
+              <p class="section-copy">Single-owner guard for polling, dispatch, and unattended merge work.</p>
+            </div>
+          </div>
+
+          <pre class="code-panel"><%= pretty_value(Map.get(@payload, :runner)) %></pre>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
               <h2 class="section-title">Rate limits</h2>
               <p class="section-copy">Latest upstream rate-limit snapshot, when available.</p>
             </div>

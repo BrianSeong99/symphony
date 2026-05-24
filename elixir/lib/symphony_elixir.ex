@@ -24,15 +24,14 @@ defmodule SymphonyElixir.Application do
     :ok = SymphonyElixir.LogFile.configure()
 
     children =
-      [
-        {Phoenix.PubSub, name: SymphonyElixir.PubSub},
-        {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
-        SymphonyElixir.WorkflowStore,
-        SymphonyElixir.HttpServer,
-        SymphonyElixir.StatusDashboard
-      ]
-      |> maybe_prepend_orchestrator()
-      |> maybe_prepend_repo()
+      maybe_repo_children() ++
+        [
+          {Phoenix.PubSub, name: SymphonyElixir.PubSub},
+          {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
+          SymphonyElixir.WorkflowStore,
+          SymphonyElixir.HttpServer,
+          SymphonyElixir.StatusDashboard
+        ] ++ maybe_orchestrator_children()
 
     Supervisor.start_link(
       children,
@@ -47,19 +46,32 @@ defmodule SymphonyElixir.Application do
     :ok
   end
 
-  defp maybe_prepend_repo(children) do
+  @doc false
+  @spec children_for_test() :: list()
+  def children_for_test do
+    maybe_repo_children() ++
+      [
+        {Phoenix.PubSub, name: SymphonyElixir.PubSub},
+        {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
+        SymphonyElixir.WorkflowStore,
+        SymphonyElixir.HttpServer,
+        SymphonyElixir.StatusDashboard
+      ] ++ maybe_orchestrator_children()
+  end
+
+  defp maybe_repo_children do
     if repo_enabled?() do
-      [SymphonyElixir.Repo | children]
+      [SymphonyElixir.Repo]
     else
-      children
+      []
     end
   end
 
-  defp maybe_prepend_orchestrator(children) do
+  defp maybe_orchestrator_children do
     if runner_enabled?() do
-      [SymphonyElixir.Orchestrator | children]
+      [SymphonyElixir.Orchestrator]
     else
-      children
+      []
     end
   end
 

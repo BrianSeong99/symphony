@@ -92,6 +92,13 @@ bin/symphony-native
 `elixir/WORKFLOW.md`. The launchd template lives at
 `ops/launchd/ai.symphony.runner.plist`.
 
+Native runner dispatch is protected by a single-owner lock. The leader polls
+Linear and starts work; duplicate services stay observable but report
+`runner.mode: "follower"` in `/api/v1/state` and do not dispatch agents.
+Override the lock path with `SYMPHONY_RUNNER_LOCK_PATH` when two launch methods
+could otherwise compete for the same Linear project. Set
+`SYMPHONY_RUNNER_OWNERSHIP_ENABLED=false` only for tests or one-off diagnostics.
+
 ## Configuration
 
 Pass a custom workflow file path to `./bin/symphony` when starting the service:
