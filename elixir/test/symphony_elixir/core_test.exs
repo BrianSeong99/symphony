@@ -1087,6 +1087,45 @@ defmodule SymphonyElixir.CoreTest do
     assert {:noreply, ^coalesced_state} = Orchestrator.handle_info({:tick, stale_tick_token}, coalesced_state)
   end
 
+  test "snapshot exposes Linear tracker rate-limit backoff" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      poll_interval_ms: 30_000
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :TrackerRateLimitSnapshotOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    until_ms = System.monotonic_time(:millisecond) + 60_000
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | next_poll_due_at_ms: until_ms,
+          tracker_rate_limit: %{
+            provider: "linear",
+            classification: :external_service_failure,
+            reason: "linear_api_rate_limited",
+            duration_ms: 3_600_000,
+            until_ms: until_ms,
+            observed_at: DateTime.utc_now()
+          }
+      }
+    end)
+
+    assert %{tracker_rate_limit: rate_limit, polling: polling} = Orchestrator.snapshot(orchestrator_name, 1_000)
+    assert rate_limit.provider == "linear"
+    assert rate_limit.reason == "linear_api_rate_limited"
+    assert rate_limit.remaining_ms > 0
+    assert polling.next_poll_in_ms > 0
+  end
+
   test "select_worker_host_for_test skips full ssh hosts under the shared per-host cap" do
     write_workflow_file!(Workflow.workflow_file_path(),
       worker_ssh_hosts: ["worker-a", "worker-b"],

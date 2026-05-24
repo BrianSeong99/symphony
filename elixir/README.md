@@ -31,6 +31,11 @@ issue claimed and exposes it as blocked in the runtime state, JSON API, and dash
 entries are in memory only; restarting the orchestrator clears that blocked map, so any still-active
 Linear issue can become a dispatch candidate again after restart.
 
+When Linear returns a rate-limit response, Symphony pauses tracker polling for the provider
+window instead of retrying every poll interval. The current pause is exposed in `/api/v1/state`
+as `tracker_rate_limit` so operators can tell that execution is waiting on Linear rather than
+silently stuck.
+
 ## How to use it
 
 1. Make sure your codebase is set up to work well with agents: see

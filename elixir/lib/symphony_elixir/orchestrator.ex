@@ -55,7 +55,8 @@ defmodule SymphonyElixir.Orchestrator do
       blocked: %{},
       retry_attempts: %{},
       codex_totals: nil,
-      codex_rate_limits: nil
+      codex_rate_limits: nil,
+      tracker_rate_limit: nil
     ]
   end
 
@@ -126,7 +127,7 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_info(:run_poll_cycle, state) do
     state = refresh_runtime_config(state)
     state = maybe_dispatch(state)
-    state = schedule_tick(state, state.poll_interval_ms)
+    state = schedule_tick(state, next_poll_delay_ms(state))
     state = %{state | poll_check_in_progress: false}
 
     notify_dashboard()
@@ -289,58 +290,106 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_dispatch(%State{} = state) do
-    state =
+    if tracker_rate_limited?(state) do
       state
-      |> reconcile_running_issues()
-      |> reconcile_blocked_issues()
-
-    with :ok <- Config.validate!(),
-         {:ok, issues} <- Tracker.fetch_candidate_issues(),
-         true <- available_slots(state) > 0 do
-      choose_issues(issues, state)
     else
-      {:error, :missing_linear_api_token} ->
-        Logger.error("Linear API token missing in WORKFLOW.md")
+      state =
         state
+        |> clear_tracker_rate_limit()
+        |> reconcile_running_issues()
+        |> reconcile_blocked_issues()
 
-      {:error, :missing_linear_project_slug} ->
-        Logger.error("Linear project slug missing in WORKFLOW.md")
-        state
+      with :ok <- Config.validate!(),
+           {:ok, issues} <- Tracker.fetch_candidate_issues(),
+           true <- available_slots(state) > 0 do
+        choose_issues(issues, state)
+      else
+        {:error, {:linear_api_rate_limited, duration_ms}} ->
+          apply_tracker_rate_limit(state, duration_ms)
 
-      {:error, :missing_tracker_kind} ->
-        Logger.error("Tracker kind missing in WORKFLOW.md")
+        {:error, :missing_linear_api_token} ->
+          Logger.error("Linear API token missing in WORKFLOW.md")
+          state
 
-        state
+        {:error, :missing_linear_project_slug} ->
+          Logger.error("Linear project slug missing in WORKFLOW.md")
+          state
 
-      {:error, {:unsupported_tracker_kind, kind}} ->
-        Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
+        {:error, :missing_tracker_kind} ->
+          Logger.error("Tracker kind missing in WORKFLOW.md")
 
-        state
+          state
 
-      {:error, {:invalid_workflow_config, message}} ->
-        Logger.error("Invalid WORKFLOW.md config: #{message}")
-        state
+        {:error, {:unsupported_tracker_kind, kind}} ->
+          Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
 
-      {:error, {:missing_workflow_file, path, reason}} ->
-        Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
-        state
+          state
 
-      {:error, :workflow_front_matter_not_a_map} ->
-        Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
-        state
+        {:error, {:invalid_workflow_config, message}} ->
+          Logger.error("Invalid WORKFLOW.md config: #{message}")
+          state
 
-      {:error, {:workflow_parse_error, reason}} ->
-        Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
-        state
+        {:error, {:missing_workflow_file, path, reason}} ->
+          Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
+          state
 
-      {:error, reason} ->
-        Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
-        state
+        {:error, :workflow_front_matter_not_a_map} ->
+          Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
+          state
 
-      false ->
-        state
+        {:error, {:workflow_parse_error, reason}} ->
+          Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
+          state
+
+        {:error, reason} ->
+          Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
+          state
+
+        false ->
+          state
+      end
     end
   end
+
+  defp tracker_rate_limited?(%State{tracker_rate_limit: %{until_ms: until_ms}})
+       when is_integer(until_ms) do
+    System.monotonic_time(:millisecond) < until_ms
+  end
+
+  defp tracker_rate_limited?(_state), do: false
+
+  defp clear_tracker_rate_limit(%State{tracker_rate_limit: %{until_ms: until_ms}} = state)
+       when is_integer(until_ms) do
+    if System.monotonic_time(:millisecond) >= until_ms do
+      %{state | tracker_rate_limit: nil}
+    else
+      state
+    end
+  end
+
+  defp clear_tracker_rate_limit(%State{} = state), do: state
+
+  defp apply_tracker_rate_limit(%State{} = state, duration_ms)
+       when is_integer(duration_ms) and duration_ms > 0 do
+    now_ms = System.monotonic_time(:millisecond)
+    until_ms = now_ms + duration_ms
+
+    Logger.warning("Linear tracker rate limited; pausing polling for #{duration_ms}ms")
+
+    %{
+      state
+      | tracker_rate_limit: %{
+          provider: "linear",
+          classification: :external_service_failure,
+          reason: "linear_api_rate_limited",
+          duration_ms: duration_ms,
+          until_ms: until_ms,
+          observed_at: DateTime.utc_now()
+        }
+    }
+  end
+
+  defp apply_tracker_rate_limit(%State{} = state, _duration_ms), do: state
 
   defp reconcile_running_issues(%State{} = state) do
     state =
@@ -2195,6 +2244,7 @@ defmodule SymphonyElixir.Orchestrator do
        blocked: blocked,
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
+       tracker_rate_limit: tracker_rate_limit_snapshot(state, now_ms),
        polling: %{
          checking?: state.poll_check_in_progress == true,
          next_poll_in_ms: next_poll_in_ms(state.next_poll_due_at_ms, now_ms),
@@ -2400,6 +2450,19 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
+  defp next_poll_delay_ms(%State{tracker_rate_limit: %{until_ms: until_ms}} = state)
+       when is_integer(until_ms) do
+    now_ms = System.monotonic_time(:millisecond)
+
+    if until_ms > now_ms do
+      max(0, until_ms - now_ms)
+    else
+      state.poll_interval_ms
+    end
+  end
+
+  defp next_poll_delay_ms(%State{} = state), do: state.poll_interval_ms
+
   defp schedule_poll_cycle_start do
     :timer.send_after(@poll_transition_render_delay_ms, self(), :run_poll_cycle)
     :ok
@@ -2410,6 +2473,28 @@ defmodule SymphonyElixir.Orchestrator do
   defp next_poll_in_ms(next_poll_due_at_ms, now_ms) when is_integer(next_poll_due_at_ms) do
     max(0, next_poll_due_at_ms - now_ms)
   end
+
+  defp tracker_rate_limit_snapshot(%State{tracker_rate_limit: %{until_ms: until_ms} = rate_limit}, now_ms)
+       when is_integer(until_ms) do
+    %{
+      provider: rate_limit.provider,
+      classification: rate_limit.classification,
+      reason: rate_limit.reason,
+      duration_ms: rate_limit.duration_ms,
+      remaining_ms: max(0, until_ms - now_ms),
+      observed_at: iso8601(Map.get(rate_limit, :observed_at))
+    }
+  end
+
+  defp tracker_rate_limit_snapshot(_state, _now_ms), do: nil
+
+  defp iso8601(%DateTime{} = datetime) do
+    datetime
+    |> DateTime.truncate(:second)
+    |> DateTime.to_iso8601()
+  end
+
+  defp iso8601(_datetime), do: nil
 
   defp pop_running_entry(state, issue_id) do
     {Map.get(state.running, issue_id), %{state | running: Map.delete(state.running, issue_id)}}
