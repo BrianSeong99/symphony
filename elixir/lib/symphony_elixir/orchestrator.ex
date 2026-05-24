@@ -7,7 +7,17 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, RunLog, RunnerObserver, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{
+    AgentRunner,
+    Config,
+    RunLog,
+    RunnerObserver,
+    RunnerOwnership,
+    StatusDashboard,
+    Tracker,
+    Workspace
+  }
+
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -56,7 +66,8 @@ defmodule SymphonyElixir.Orchestrator do
       retry_attempts: %{},
       codex_totals: nil,
       codex_rate_limits: nil,
-      tracker_rate_limit: nil
+      tracker_rate_limit: nil,
+      runner_ownership: nil
     ]
   end
 
@@ -67,9 +78,10 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     now_ms = System.monotonic_time(:millisecond)
     config = Config.settings!()
+    runner_ownership = acquire_runner_ownership(config, opts)
 
     state = %State{
       poll_interval_ms: config.polling.interval_ms,
@@ -79,59 +91,136 @@ defmodule SymphonyElixir.Orchestrator do
       tick_timer_ref: nil,
       tick_token: nil,
       codex_totals: @empty_codex_totals,
-      codex_rate_limits: nil
+      codex_rate_limits: nil,
+      runner_ownership: runner_ownership
     }
 
     run_terminal_workspace_cleanup()
-    state = schedule_tick(state, 0)
+
+    state =
+      if runner_leader?(state) do
+        schedule_tick(state, 0)
+      else
+        %{state | next_poll_due_at_ms: nil}
+      end
 
     {:ok, state}
   end
 
   @impl true
+  def terminate(_reason, %State{runner_ownership: runner_ownership}) do
+    RunnerOwnership.release(runner_ownership)
+    :ok
+  end
+
+  defp acquire_runner_ownership(config, opts) do
+    if Keyword.get(opts, :runner_ownership, RunnerOwnership.enabled_by_default?()) do
+      case RunnerOwnership.acquire(settings: config, lock_path: Keyword.get(opts, :runner_lock_path)) do
+        {:ok, ownership} ->
+          Logger.info("Runner ownership acquired lock_path=#{ownership.lock_path} owner_id=#{ownership.owner_id}")
+          ownership
+
+        {:error, {:already_owned, owner, lock_path}} ->
+          Logger.warning("Runner ownership unavailable; another Symphony runner owns lock_path=#{lock_path}")
+
+          %{
+            enabled?: true,
+            leader?: false,
+            mode: "follower",
+            lock_path: lock_path,
+            reason: "another Symphony runner owns this project",
+            owner: runner_owner_snapshot(owner)
+          }
+
+        {:error, reason} ->
+          Logger.error("Runner ownership failed: #{inspect(reason)}")
+
+          %{
+            enabled?: true,
+            leader?: false,
+            mode: "error",
+            reason: inspect(reason)
+          }
+      end
+    else
+      RunnerOwnership.disabled()
+    end
+  end
+
+  defp runner_leader?(%State{runner_ownership: %{leader?: true}}), do: true
+  defp runner_leader?(%State{runner_ownership: nil}), do: true
+  defp runner_leader?(_state), do: false
+
+  defp runner_owner_snapshot(owner) when is_map(owner) do
+    %{
+      owner_id: map_get(owner, "owner_id"),
+      host: map_get(owner, "host"),
+      os_pid: map_get(owner, "os_pid"),
+      beam_pid: map_get(owner, "beam_pid"),
+      booted_at: map_get(owner, "booted_at")
+    }
+  end
+
+  defp runner_owner_snapshot(_owner), do: nil
+
+  defp map_get(map, key), do: Map.get(map, key) || Map.get(map, String.to_atom(key))
+
+  @impl true
   def handle_info({:tick, tick_token}, %{tick_token: tick_token} = state)
       when is_reference(tick_token) do
-    state = refresh_runtime_config(state)
+    if runner_leader?(state) do
+      state = refresh_runtime_config(state)
 
-    state = %{
-      state
-      | poll_check_in_progress: true,
-        next_poll_due_at_ms: nil,
-        tick_timer_ref: nil,
-        tick_token: nil
-    }
+      state = %{
+        state
+        | poll_check_in_progress: true,
+          next_poll_due_at_ms: nil,
+          tick_timer_ref: nil,
+          tick_token: nil
+      }
 
-    notify_dashboard()
-    :ok = schedule_poll_cycle_start()
-    {:noreply, state}
+      notify_dashboard()
+      :ok = schedule_poll_cycle_start()
+      {:noreply, state}
+    else
+      {:noreply, %{state | tick_timer_ref: nil, tick_token: nil, next_poll_due_at_ms: nil}}
+    end
   end
 
   def handle_info({:tick, _tick_token}, state), do: {:noreply, state}
 
   def handle_info(:tick, state) do
-    state = refresh_runtime_config(state)
+    if runner_leader?(state) do
+      state = refresh_runtime_config(state)
 
-    state = %{
-      state
-      | poll_check_in_progress: true,
-        next_poll_due_at_ms: nil,
-        tick_timer_ref: nil,
-        tick_token: nil
-    }
+      state = %{
+        state
+        | poll_check_in_progress: true,
+          next_poll_due_at_ms: nil,
+          tick_timer_ref: nil,
+          tick_token: nil
+      }
 
-    notify_dashboard()
-    :ok = schedule_poll_cycle_start()
-    {:noreply, state}
+      notify_dashboard()
+      :ok = schedule_poll_cycle_start()
+      {:noreply, state}
+    else
+      {:noreply, %{state | tick_timer_ref: nil, tick_token: nil, next_poll_due_at_ms: nil}}
+    end
   end
 
   def handle_info(:run_poll_cycle, state) do
-    state = refresh_runtime_config(state)
-    state = maybe_dispatch(state)
-    state = schedule_tick(state, next_poll_delay_ms(state))
-    state = %{state | poll_check_in_progress: false}
+    if runner_leader?(state) do
+      state = refresh_runtime_config(state)
+      state = maybe_dispatch(state)
+      state = schedule_tick(state, next_poll_delay_ms(state))
+      state = %{state | poll_check_in_progress: false}
 
-    notify_dashboard()
-    {:noreply, state}
+      notify_dashboard()
+      {:noreply, state}
+    else
+      {:noreply, %{state | poll_check_in_progress: false, next_poll_due_at_ms: nil}}
+    end
   end
 
   def handle_info(
@@ -290,64 +379,69 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_dispatch(%State{} = state) do
-    if tracker_rate_limited?(state) do
-      state
-    else
-      state =
+    cond do
+      not runner_leader?(state) ->
         state
-        |> clear_tracker_rate_limit()
-        |> reconcile_running_issues()
-        |> reconcile_blocked_issues()
 
-      with :ok <- Config.validate!(),
-           {:ok, issues} <- Tracker.fetch_candidate_issues(),
-           true <- available_slots(state) > 0 do
-        choose_issues(issues, state)
-      else
-        {:error, {:linear_api_rate_limited, duration_ms}} ->
-          apply_tracker_rate_limit(state, duration_ms)
+      tracker_rate_limited?(state) ->
+        state
 
-        {:error, :missing_linear_api_token} ->
-          Logger.error("Linear API token missing in WORKFLOW.md")
+      true ->
+        state =
           state
+          |> clear_tracker_rate_limit()
+          |> reconcile_running_issues()
+          |> reconcile_blocked_issues()
 
-        {:error, :missing_linear_project_slug} ->
-          Logger.error("Linear project slug missing in WORKFLOW.md")
-          state
+        with :ok <- Config.validate!(),
+             {:ok, issues} <- Tracker.fetch_candidate_issues(),
+             true <- available_slots(state) > 0 do
+          choose_issues(issues, state)
+        else
+          {:error, {:linear_api_rate_limited, duration_ms}} ->
+            apply_tracker_rate_limit(state, duration_ms)
 
-        {:error, :missing_tracker_kind} ->
-          Logger.error("Tracker kind missing in WORKFLOW.md")
+          {:error, :missing_linear_api_token} ->
+            Logger.error("Linear API token missing in WORKFLOW.md")
+            state
 
-          state
+          {:error, :missing_linear_project_slug} ->
+            Logger.error("Linear project slug missing in WORKFLOW.md")
+            state
 
-        {:error, {:unsupported_tracker_kind, kind}} ->
-          Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
+          {:error, :missing_tracker_kind} ->
+            Logger.error("Tracker kind missing in WORKFLOW.md")
 
-          state
+            state
 
-        {:error, {:invalid_workflow_config, message}} ->
-          Logger.error("Invalid WORKFLOW.md config: #{message}")
-          state
+          {:error, {:unsupported_tracker_kind, kind}} ->
+            Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
 
-        {:error, {:missing_workflow_file, path, reason}} ->
-          Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
-          state
+            state
 
-        {:error, :workflow_front_matter_not_a_map} ->
-          Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
-          state
+          {:error, {:invalid_workflow_config, message}} ->
+            Logger.error("Invalid WORKFLOW.md config: #{message}")
+            state
 
-        {:error, {:workflow_parse_error, reason}} ->
-          Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
-          state
+          {:error, {:missing_workflow_file, path, reason}} ->
+            Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
+            state
 
-        {:error, reason} ->
-          Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
-          state
+          {:error, :workflow_front_matter_not_a_map} ->
+            Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
+            state
 
-        false ->
-          state
-      end
+          {:error, {:workflow_parse_error, reason}} ->
+            Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
+            state
+
+          {:error, reason} ->
+            Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
+            state
+
+          false ->
+            state
+        end
     end
   end
 
@@ -2245,6 +2339,7 @@ defmodule SymphonyElixir.Orchestrator do
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
        tracker_rate_limit: tracker_rate_limit_snapshot(state, now_ms),
+       runner: runner_snapshot(state),
        polling: %{
          checking?: state.poll_check_in_progress == true,
          next_poll_in_ms: next_poll_in_ms(state.next_poll_due_at_ms, now_ms),
@@ -2254,18 +2349,29 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_call(:request_refresh, _from, state) do
-    now_ms = System.monotonic_time(:millisecond)
-    already_due? = is_integer(state.next_poll_due_at_ms) and state.next_poll_due_at_ms <= now_ms
-    coalesced = state.poll_check_in_progress == true or already_due?
-    state = if coalesced, do: state, else: schedule_tick(state, 0)
+    if runner_leader?(state) do
+      now_ms = System.monotonic_time(:millisecond)
+      already_due? = is_integer(state.next_poll_due_at_ms) and state.next_poll_due_at_ms <= now_ms
+      coalesced = state.poll_check_in_progress == true or already_due?
+      state = if coalesced, do: state, else: schedule_tick(state, 0)
 
-    {:reply,
-     %{
-       queued: true,
-       coalesced: coalesced,
-       requested_at: DateTime.utc_now(),
-       operations: ["poll", "reconcile"]
-     }, state}
+      {:reply,
+       %{
+         queued: true,
+         coalesced: coalesced,
+         requested_at: DateTime.utc_now(),
+         operations: ["poll", "reconcile"]
+       }, state}
+    else
+      {:reply,
+       %{
+         queued: false,
+         coalesced: true,
+         requested_at: DateTime.utc_now(),
+         operations: ["runner_ownership"],
+         reason: "runner is not leader"
+       }, state}
+    end
   end
 
   def handle_call({:cancel_issue, issue_id, reason}, _from, state) when is_binary(issue_id) do
@@ -2487,6 +2593,24 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp tracker_rate_limit_snapshot(_state, _now_ms), do: nil
+
+  defp runner_snapshot(%State{runner_ownership: ownership}) when is_map(ownership) do
+    %{
+      enabled?: Map.get(ownership, :enabled?),
+      leader?: Map.get(ownership, :leader?),
+      mode: Map.get(ownership, :mode),
+      lock_path: Map.get(ownership, :lock_path),
+      owner_id: Map.get(ownership, :owner_id),
+      host: Map.get(ownership, :host),
+      os_pid: Map.get(ownership, :os_pid),
+      beam_pid: Map.get(ownership, :beam_pid),
+      booted_at: Map.get(ownership, :booted_at),
+      reason: Map.get(ownership, :reason),
+      owner: Map.get(ownership, :owner)
+    }
+  end
+
+  defp runner_snapshot(_state), do: nil
 
   defp iso8601(%DateTime{} = datetime) do
     datetime

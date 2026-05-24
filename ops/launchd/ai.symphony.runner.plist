@@ -36,6 +36,10 @@
     <string>0.0.0.0</string>
     <key>SYMPHONY_SERVER_PORT</key>
     <string>4000</string>
+    <key>SYMPHONY_RUNNER_OWNERSHIP_ENABLED</key>
+    <string>true</string>
+    <key>SYMPHONY_RUNNER_LOCK_PATH</key>
+    <string>/tmp/ai.symphony.runner.lock</string>
     <key>SYMPHONY_NATIVE_PATH</key>
     <string>/Users/brianseong/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
