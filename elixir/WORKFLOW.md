@@ -71,6 +71,14 @@ codex:
 
 You are working on a Linear ticket `{{ issue.identifier }}`
 
+## Self-project exclusion
+
+Do not use this unattended workflow for Symphony's own implementation issues.
+Symphony self-work is implemented directly by Brian's active coding session in
+git worktrees, with normal PR validation and merge flow. Reserve this runner
+workflow for non-Symphony projects such as Homelab, CFO, CMO, and other
+pipeline validation targets.
+
 ## Local guidance and public artifact policy
 
 Before creating branches, commits, PRs, GitHub issues, GitHub comments, Linear
