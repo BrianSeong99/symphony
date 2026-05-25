@@ -10,6 +10,7 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_failure("403 forbidden from Linear") == :auth_failure
     assert RunnerObserver.classify_failure("acceptance criteria mismatch after validation") == :requirements_mismatch
     assert RunnerObserver.classify_failure("Mix.PubSub start failed with :eperm") == :permission_denied_loop
+    assert RunnerObserver.classify_failure("startup_token_budget_exceeded total_tokens=120000") == :startup_token_budget_exceeded
 
     assert RunnerObserver.classify_failure("fatal: unable to access URL: Could not resolve host: github.com") ==
              :external_service_failure

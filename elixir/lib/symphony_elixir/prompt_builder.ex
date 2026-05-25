@@ -77,6 +77,9 @@ defmodule SymphonyElixir.PromptBuilder do
       "- Branches must be based on `main`; do not create stacked PRs.",
       "- Symphony backend owns routine Linear run-log writeback. Do not use `linear_graphql` during startup unless required issue data is missing or requirements must be changed.",
       "- Do not use GitHub connectors, app connectors, or MCP app tools for branch, commit, push, PR, review, or merge operations. Use local `git` and `gh` CLI from the worktree instead.",
+      "- Keep startup context lean: use `git diff --stat`, targeted `rg`, and line-range reads; do not print full guidance files, package manifests, generated files, or full diffs unless required.",
+      "- If this worktree already has relevant edits, validate and repair those edits first instead of restarting broad discovery.",
+      "- Within five startup commands, either edit a target file or run targeted validation unless you are blocked by missing credentials or tools.",
       "- For small tasks, inspect or edit repository files within 45 seconds. Do not spend the opening turn maintaining Linear workpads.",
       "- If the issue names exact files, exact fixture content, or an exact validation command, implement that direct path before broad repository searches.",
       "- Your first action after reading this prompt should be a repository command such as `pwd`, `git status --short`, `find`, `rg`, or opening the relevant guidance file. Do not spend the opening turn only reasoning.",
@@ -145,7 +148,9 @@ defmodule SymphonyElixir.PromptBuilder do
       "",
       context_hygiene_rule(),
       "- Do not install dependencies during initial exploration. Install or build only after you know the validation path needs it.",
-      "- Prefer targeted file reads and `rg` searches over broad directory listings."
+      "- Prefer targeted file reads and `rg` searches over broad directory listings.",
+      "- Keep startup context lean: use `git diff --stat`, targeted `rg`, and line-range reads instead of printing full guidance files, package manifests, generated files, or full diffs.",
+      "- If the worktree already has relevant edits, validate and repair those edits before broad rediscovery."
     ]
     |> Enum.join("\n")
   end

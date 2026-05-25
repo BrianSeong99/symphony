@@ -283,7 +283,11 @@ defmodule SymphonyElixir.Orchestrator do
           |> apply_codex_rate_limits(update)
 
         state = put_running_entry(state, issue_id, updated_running_entry)
-        state = maybe_block_hard_token_budget_issue(state, issue_id, updated_running_entry)
+
+        state =
+          state
+          |> maybe_block_startup_token_budget_issue(issue_id, updated_running_entry)
+          |> maybe_block_hard_token_budget_issue_if_running(issue_id, updated_running_entry)
 
         notify_dashboard()
         {:noreply, state}
@@ -873,6 +877,63 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  defp maybe_block_hard_token_budget_issue_if_running(%State{} = state, issue_id, running_entry) do
+    if Map.has_key?(state.running, issue_id) do
+      maybe_block_hard_token_budget_issue(state, issue_id, running_entry)
+    else
+      state
+    end
+  end
+
+  defp maybe_block_startup_token_budget_issue(%State{} = state, issue_id, running_entry) do
+    settings = Config.settings!().agent
+    window_ms = settings.startup_token_window_ms
+    max_tokens = settings.startup_max_total_tokens
+    total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+    elapsed_ms = running_age_ms(running_entry, DateTime.utc_now())
+
+    cond do
+      window_ms <= 0 or max_tokens <= 0 ->
+        state
+
+      not is_integer(total_tokens) or not is_integer(elapsed_ms) ->
+        state
+
+      elapsed_ms > window_ms ->
+        state
+
+      total_tokens <= max_tokens ->
+        state
+
+      true ->
+        block_startup_token_budget_issue(state, issue_id, running_entry, window_ms, max_tokens, total_tokens, elapsed_ms)
+    end
+  end
+
+  defp block_startup_token_budget_issue(state, issue_id, running_entry, window_ms, max_tokens, total_tokens, elapsed_ms) do
+    identifier = Map.get(running_entry, :identifier, issue_id)
+    session_id = running_entry_session_id(running_entry)
+    classification = :startup_token_budget_exceeded
+
+    reason =
+      "startup_token_budget_exceeded total_tokens=#{total_tokens} startup_max_total_tokens=#{max_tokens} " <>
+        "elapsed_ms=#{elapsed_ms} startup_token_window_ms=#{window_ms}"
+
+    failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
+
+    Logger.warning("Issue blocked by startup token budget: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} #{reason}")
+
+    running_entry =
+      running_entry
+      |> Map.put(:classification, classification)
+      |> Map.put(:failure_fingerprint, failure_fingerprint)
+      |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
+
+    state
+    |> record_session_completion_totals(running_entry)
+    |> stop_and_block_issue(issue_id, running_entry, reason)
+  end
+
   defp block_hard_token_budget_issue(state, issue_id, running_entry, max_tokens, total_tokens) do
     identifier = Map.get(running_entry, :identifier, issue_id)
     session_id = running_entry_session_id(running_entry)
@@ -1015,6 +1076,13 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp running_elapsed_ms(running_entry, now) do
     case Map.get(running_entry, :workspace_progress_changed_at) || Map.get(running_entry, :started_at) do
+      %DateTime{} = started_at -> max(0, DateTime.diff(now, started_at, :millisecond))
+      _ -> nil
+    end
+  end
+
+  defp running_age_ms(running_entry, now) do
+    case Map.get(running_entry, :started_at) do
       %DateTime{} = started_at -> max(0, DateTime.diff(now, started_at, :millisecond))
       _ -> nil
     end

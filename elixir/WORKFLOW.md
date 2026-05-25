@@ -72,10 +72,12 @@ hooks:
     fi
 agent:
   max_concurrent_agents: 10
-  max_turns: 20
+  max_turns: 12
   max_retry_attempts: 3
   no_progress_timeout_ms: 90000
-  no_progress_max_tokens: 220000
+  no_progress_max_tokens: 120000
+  startup_token_window_ms: 60000
+  startup_max_total_tokens: 120000
   max_total_tokens: 500000
   prompt_mode: compact
 codex:
