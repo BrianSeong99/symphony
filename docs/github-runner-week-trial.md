@@ -54,7 +54,7 @@ first few days so failures are easy to read.
 The runner guardrails remain active:
 
 - `max_retry_attempts: 3`
-- `startup_max_total_tokens: 60000`
+- `startup_max_total_tokens: 100000`
 - `max_total_tokens: 150000`
 - no-progress timeout and token classifiers
 - mandatory git worktree check before each run
