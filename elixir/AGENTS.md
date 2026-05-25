@@ -6,7 +6,8 @@ This directory contains the Elixir agent orchestration service that polls Linear
 
 - Elixir: `1.19.x` (OTP 28) via `mise`.
 - Install deps: `mix setup`.
-- Main quality gate: `make all` (format check, lint, coverage, dialyzer).
+- Main quality gate: `make all` (setup, build, format check, lint, coverage).
+- Deeper static analysis gate: `make strict` (runs `make all` plus dialyzer).
 
 
 ## Codebase-Specific Conventions

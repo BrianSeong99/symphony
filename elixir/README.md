@@ -235,6 +235,16 @@ The observability UI now runs on a minimal Phoenix stack:
 make all
 ```
 
+`make all` is the handoff gate for Symphony Elixir changes. It runs setup,
+build, format check, lint, and coverage. Coverage currently enforces an 85%
+floor so the gate catches meaningful regressions while remaining usable for
+handoff. Raise the floor only after the measured suite coverage is consistently
+above the new target.
+
+`make strict` adds dialyzer for deeper local checks. Dialyzer is intentionally
+outside the default handoff gate until the current warning backlog is cleared,
+so unrelated static-analysis debt does not block every PR.
+
 Run the real external end-to-end test only when you want Symphony to create disposable Linear
 resources and launch a real `codex app-server` session:
 
