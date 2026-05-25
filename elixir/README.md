@@ -159,6 +159,23 @@ You are working on a Linear issue {{ issue.identifier }}.
 Title: {{ issue.title }} Body: {{ issue.description }}
 ```
 
+GitHub Issues can be used as the tracker when Linear is unavailable or when a
+project should run on GitHub-native issues and comments:
+
+```yaml
+tracker:
+  kind: github
+  repository: BrianSeong99/homelab
+  active_labels:
+    - symphony-ready
+```
+
+The GitHub tracker uses the host `gh` CLI session, so it follows Brian's current
+GitHub auth, SSH setup, repo permissions, and private-repo access. It scopes
+pickup through `active_labels`, normalizes GitHub issues into Symphony issue
+records, writes a single marked run-log comment, and closes the GitHub issue
+when Symphony reaches a terminal state.
+
 Notes:
 
 - If a value is missing, defaults are used.
@@ -190,6 +207,8 @@ Notes:
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
+- `tracker.repository` is required for `tracker.kind: github` and can also read from
+  `GITHUB_REPOSITORY`.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the

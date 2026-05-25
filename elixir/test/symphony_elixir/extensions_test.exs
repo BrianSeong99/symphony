@@ -4,6 +4,7 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias SymphonyElixir.GitHub.Adapter, as: GitHubAdapter
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
 
@@ -181,7 +182,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     WorkflowStore.force_reload()
   end
 
-  test "tracker delegates to memory and linear adapters" do
+  test "tracker delegates to memory, GitHub, and linear adapters" do
     issue = %Issue{id: "issue-1", identifier: "MT-1", state: "In Progress"}
     Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue, %{id: "ignored"}])
     Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
@@ -205,6 +206,83 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
     assert SymphonyElixir.Tracker.adapter() == Adapter
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repository: "BrianSeong99/homelab"
+    )
+
+    assert SymphonyElixir.Tracker.adapter() == GitHubAdapter
+  end
+
+  test "GitHub adapter fetches label-scoped issues and writes run log comments" do
+    Application.put_env(:symphony_elixir, :github_command_runner, fn args ->
+      send(self(), {:gh_called, args})
+
+      case args do
+        ["issue", "list", "--repo", "BrianSeong99/homelab", "--state", "open", "--limit", "100", "--label", "symphony-ready", "--json", _json] ->
+          {Jason.encode!([
+             %{
+               "number" => 46,
+               "title" => "Build read-only session index",
+               "body" => "Implement read-only session index.",
+               "state" => "OPEN",
+               "labels" => [%{"name" => "symphony-ready"}],
+               "assignees" => [%{"login" => "BrianSeong99"}],
+               "url" => "https://github.com/BrianSeong99/homelab/issues/46",
+               "createdAt" => "2026-05-25T00:00:00Z",
+               "updatedAt" => "2026-05-25T00:01:00Z"
+             }
+           ]), 0}
+
+        ["issue", "view", "46", "--repo", "BrianSeong99/homelab", "--json", _json] ->
+          {Jason.encode!(%{
+             "number" => 46,
+             "title" => "Build read-only session index",
+             "body" => "Implement read-only session index.",
+             "state" => "CLOSED",
+             "labels" => [%{"name" => "symphony-ready"}],
+             "assignees" => [],
+             "url" => "https://github.com/BrianSeong99/homelab/issues/46",
+             "createdAt" => "2026-05-25T00:00:00Z",
+             "updatedAt" => "2026-05-25T00:03:00Z"
+           }), 0}
+
+        ["api", "repos/BrianSeong99/homelab/issues/46/comments", "--paginate", "--jq", _jq] ->
+          {"12345\n", 0}
+
+        ["api", "--method", "PATCH", "repos/BrianSeong99/homelab/issues/comments/12345", "-f", "body=" <> body] ->
+          send(self(), {:github_comment_body, body})
+          {"{}", 0}
+
+        ["issue", "close", "46", "--repo", "BrianSeong99/homelab", "--comment", _comment] ->
+          {"", 0}
+      end
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repository: "BrianSeong99/homelab",
+      tracker_active_labels: ["symphony-ready"]
+    )
+
+    assert {:ok, [issue]} = GitHubAdapter.fetch_candidate_issues()
+    assert issue.id == "46"
+    assert issue.identifier == "GH-46"
+    assert issue.state == "Todo"
+    assert issue.labels == ["symphony-ready"]
+
+    assert {:ok, [done_issue]} = GitHubAdapter.fetch_issue_states_by_ids(["46"])
+    assert done_issue.state == "Done"
+
+    assert :ok = GitHubAdapter.upsert_run_log_comment("46", "run evidence")
+    assert_receive {:github_comment_body, body}
+    assert body =~ "<!-- symphony-run-log -->"
+    assert body =~ "run evidence"
+
+    assert :ok = GitHubAdapter.update_issue_state("GH-46", "Done")
+
+    Application.delete_env(:symphony_elixir, :github_command_runner)
   end
 
   test "linear adapter delegates reads and validates mutation responses" do
