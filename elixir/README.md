@@ -92,6 +92,13 @@ bin/symphony-native
 `elixir/WORKFLOW.md`. The launchd template lives at
 `ops/launchd/ai.symphony.runner.plist`.
 
+Brian's default Mac Studio daemon is a dashboard/control-plane process for
+Symphony itself. It sets `SYMPHONY_RUNNER_ENABLED=false` so Symphony Linear
+issues are implemented directly by Brian's active coding session in git
+worktrees, not by the Symphony runner. Use an explicit project workflow and
+enable the runner only for non-Symphony projects such as Homelab, CFO, CMO, or
+other pipeline validation targets.
+
 Native runner dispatch is protected by a single-owner lock. The leader polls
 Linear and starts work; duplicate services stay observable but report
 `runner.mode: "follower"` in `/api/v1/state` and do not dispatch agents.

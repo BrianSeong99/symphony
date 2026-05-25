@@ -32,6 +32,8 @@
   <dict>
     <key>SYMPHONY_REPO_ENABLED</key>
     <string>false</string>
+    <key>SYMPHONY_RUNNER_ENABLED</key>
+    <string>false</string>
     <key>SYMPHONY_SERVER_HOST</key>
     <string>0.0.0.0</string>
     <key>SYMPHONY_SERVER_PORT</key>
