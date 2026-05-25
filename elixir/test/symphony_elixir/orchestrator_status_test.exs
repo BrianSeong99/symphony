@@ -1166,6 +1166,87 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute Process.alive?(worker_pid)
   end
 
+  test "orchestrator blocks startup context burn before the hard token budget" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      startup_token_window_ms: 60_000,
+      startup_max_total_tokens: 10_000,
+      max_total_tokens: 500_000
+    )
+
+    issue_id = "issue-startup-token-budget"
+    orchestrator_name = Module.concat(__MODULE__, :StartupTokenBudgetOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-STARTUP-TOKEN-BUDGET",
+      issue: %Issue{id: issue_id, identifier: "LAB-STARTUP-TOKEN-BUDGET", state: "In Progress"},
+      workspace_path: nil,
+      session_id: "thread-startup-token-budget-turn-1",
+      codex_total_tokens: 8_000,
+      codex_last_reported_total_tokens: 8_000,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      %{
+        event: :notification,
+        timestamp: DateTime.utc_now(),
+        payload: %{
+          method: "turn/completed",
+          usage: %{total_tokens: 12_000, input_tokens: 11_500, output_tokens: 500}
+        }
+      }
+    })
+
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.running, issue_id)
+
+    assert %{
+             identifier: "LAB-STARTUP-TOKEN-BUDGET",
+             classification: :startup_token_budget_exceeded,
+             error: error,
+             suggested_action: suggested_action
+           } = state.blocked[issue_id]
+
+    assert error =~ "startup_token_budget_exceeded"
+    assert error =~ "startup_max_total_tokens=10000"
+    assert suggested_action =~ "shrink startup context"
+
+    refute Process.alive?(worker_pid)
+  end
+
   test "orchestrator no-progress token budget ignores cached context tokens" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -1972,6 +2053,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
           {:ok, _pid} -> :ok
           {:error, {:already_started, _pid}} -> :ok
+          {:error, :not_found} -> :ok
         end
       end
     end)

@@ -114,6 +114,8 @@ defmodule SymphonyElixir.TestSupport do
           max_retry_backoff_ms: 300_000,
           no_progress_timeout_ms: 300_000,
           no_progress_max_tokens: 300_000,
+          startup_token_window_ms: 0,
+          startup_max_total_tokens: 0,
           max_total_tokens: 500_000,
           prompt_mode: "workflow",
           max_concurrent_agents_by_state: %{},
@@ -162,6 +164,8 @@ defmodule SymphonyElixir.TestSupport do
     max_retry_backoff_ms = Keyword.get(config, :max_retry_backoff_ms)
     no_progress_timeout_ms = Keyword.get(config, :no_progress_timeout_ms)
     no_progress_max_tokens = Keyword.get(config, :no_progress_max_tokens)
+    startup_token_window_ms = Keyword.get(config, :startup_token_window_ms)
+    startup_max_total_tokens = Keyword.get(config, :startup_max_total_tokens)
     max_total_tokens = Keyword.get(config, :max_total_tokens)
     prompt_mode = Keyword.get(config, :prompt_mode)
     max_concurrent_agents_by_state = Keyword.get(config, :max_concurrent_agents_by_state)
@@ -213,6 +217,8 @@ defmodule SymphonyElixir.TestSupport do
         "  max_retry_backoff_ms: #{yaml_value(max_retry_backoff_ms)}",
         "  no_progress_timeout_ms: #{yaml_value(no_progress_timeout_ms)}",
         "  no_progress_max_tokens: #{yaml_value(no_progress_max_tokens)}",
+        "  startup_token_window_ms: #{yaml_value(startup_token_window_ms)}",
+        "  startup_max_total_tokens: #{yaml_value(startup_max_total_tokens)}",
         "  max_total_tokens: #{yaml_value(max_total_tokens)}",
         "  prompt_mode: #{yaml_value(prompt_mode)}",
         "  max_concurrent_agents_by_state: #{yaml_value(max_concurrent_agents_by_state)}",

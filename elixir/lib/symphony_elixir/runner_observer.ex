@@ -23,6 +23,7 @@ defmodule SymphonyElixir.RunnerObserver do
           | :permission_denied_loop
           | :process_exit_nonzero
           | :requirements_mismatch
+          | :startup_token_budget_exceeded
           | :tool_failure_repeat
           | :token_budget_exceeded
           | :turn_failed
@@ -60,6 +61,7 @@ defmodule SymphonyElixir.RunnerObserver do
     {:no_json_event_timeout, ["malformed json", "invalid json", "no_json_event_timeout", "json event timeout", "no json event"]},
     {:no_output_timeout, ["turn_timeout", "response_timeout", "stalled", "no output", "without codex activity"]},
     {:no_progress_budget_exceeded, ["no_progress_budget_exceeded", "no progress budget", "no git progress"]},
+    {:startup_token_budget_exceeded, ["startup_token_budget_exceeded", "startup token budget", "startup max total tokens"]},
     {:token_budget_exceeded, ["token_budget_exceeded", "hard token budget", "max total tokens"]},
     {:permission_denied_loop,
      [
@@ -198,6 +200,7 @@ defmodule SymphonyElixir.RunnerObserver do
   @spec suggested_action(classification() | nil) :: String.t()
   def suggested_action(:missing_tool), do: "Block the run, install or route the missing toolchain, then retry from the same issue workspace."
   def suggested_action(:no_progress_budget_exceeded), do: "Stop the stale process, preserve the worktree, and inspect why no branch/file/PR progress occurred within budget."
+  def suggested_action(:startup_token_budget_exceeded), do: "Stop the process, preserve the worktree, shrink startup context, then retry with a narrower prompt and fewer initial reads."
   def suggested_action(:token_budget_exceeded), do: "Stop the process, preserve the worktree, shrink context or split scope, then retry with a tighter prompt."
   def suggested_action(:no_output_timeout), do: "Stop the stale process, preserve the worktree, and retry once with the same issue context."
   def suggested_action(:no_json_event_timeout), do: "Treat the app-server stream as unhealthy and restart the session after recording the last raw output."
