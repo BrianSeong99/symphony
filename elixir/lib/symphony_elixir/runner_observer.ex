@@ -75,7 +75,15 @@ defmodule SymphonyElixir.RunnerObserver do
        "allow github",
        "approval prompt"
      ]},
-    {:requirements_mismatch, ["requirements_mismatch", "validation contract", "acceptance criteria mismatch"]},
+    {:requirements_mismatch,
+     [
+       "requirements_mismatch",
+       "validation contract",
+       "acceptance criteria mismatch",
+       "err_pnpm_no_pkg_manifest",
+       "no package.json found",
+       "no package manifest found"
+     ]},
     {:validation_failure_repeat, ["validation_failure_repeat", "test failure", "mix test", "validation failed"]},
     {:tool_failure_repeat, ["tool_failure_repeat", "tool_call_failed"]},
     {:external_service_failure,

@@ -199,6 +199,65 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert is_integer(completed_state.codex_totals.seconds_running)
   end
 
+  test "orchestrator snapshot projects token budget exhaustion for running issues" do
+    issue_id = "issue-budget-projection"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "GH-353",
+      title: "Budget projection",
+      description: "Project token budget burn",
+      state: "In Progress",
+      url: "https://example.org/issues/GH-353"
+    }
+
+    write_workflow_file!(Workflow.workflow_file_path(), max_total_tokens: 500_000)
+
+    orchestrator_name = Module.concat(__MODULE__, :BudgetProjectionOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.add(DateTime.utc_now(), -60, :second)
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: "thread-budget",
+      codex_app_server_pid: nil,
+      turn_count: 1,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 300_000,
+      codex_output_tokens: 50_000,
+      codex_total_tokens: 350_000,
+      codex_last_reported_input_tokens: 300_000,
+      codex_last_reported_output_tokens: 50_000,
+      codex_last_reported_total_tokens: 350_000,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    assert %{running: [snapshot_entry]} = GenServer.call(pid, :snapshot)
+    assert snapshot_entry.token_budget.max_total_tokens == 500_000
+    assert snapshot_entry.token_budget.remaining_tokens == 150_000
+    assert snapshot_entry.token_budget.used_percent == 70
+    assert is_integer(snapshot_entry.token_budget.projected_exhaustion_seconds)
+  end
+
   test "orchestrator snapshot tracks turn completed usage when present" do
     issue_id = "issue-turn-completed-usage"
 

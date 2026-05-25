@@ -100,18 +100,42 @@ defmodule SymphonyElixir.Config.Schema do
     use Ecto.Schema
     import Ecto.Changeset
 
+    @default_context_exclude_patterns [
+      "node_modules/",
+      ".next/",
+      "dist/",
+      "out/",
+      "build/",
+      "coverage/",
+      ".turbo/",
+      ".cache/",
+      ".parcel-cache/",
+      ".vite/",
+      ".pytest_cache/",
+      "__pycache__/",
+      "target/",
+      ".venv/",
+      "venv/",
+      "_build/",
+      "deps/",
+      "*.log",
+      "*.tmp",
+      "*.tsbuildinfo"
+    ]
+
     @primary_key false
     embedded_schema do
       field(:root, :string, default: Path.join(System.tmp_dir!(), "symphony_workspaces"))
       field(:source_repo, :string)
       field(:base_ref, :string, default: "origin/main")
       field(:branch_prefix, :string, default: "symphony")
+      field(:context_exclude_patterns, {:array, :string}, default: @default_context_exclude_patterns)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:root, :source_repo, :base_ref, :branch_prefix], empty_values: [])
+      |> cast(attrs, [:root, :source_repo, :base_ref, :branch_prefix, :context_exclude_patterns], empty_values: [])
     end
   end
 

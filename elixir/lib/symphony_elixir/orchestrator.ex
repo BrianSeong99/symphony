@@ -1347,6 +1347,7 @@ defmodule SymphonyElixir.Orchestrator do
       last_codex_message: Map.get(running_entry, :last_codex_message),
       last_codex_event: Map.get(running_entry, :last_codex_event),
       last_codex_timestamp: Map.get(running_entry, :last_codex_timestamp),
+      token_budget: token_budget_snapshot(running_entry, DateTime.utc_now()),
       classification: classification,
       failure_fingerprint:
         Map.get(running_entry, :failure_fingerprint) ||
@@ -2370,7 +2371,8 @@ defmodule SymphonyElixir.Orchestrator do
           classification: Map.get(metadata, :classification),
           failure_fingerprint: Map.get(metadata, :failure_fingerprint),
           suggested_action: Map.get(metadata, :suggested_action),
-          runtime_seconds: running_seconds(metadata.started_at, now)
+          runtime_seconds: running_seconds(metadata.started_at, now),
+          token_budget: token_budget_snapshot(metadata, now)
         }
       end)
 
@@ -2411,7 +2413,8 @@ defmodule SymphonyElixir.Orchestrator do
           blocked_at: Map.get(metadata, :blocked_at),
           last_codex_timestamp: Map.get(metadata, :last_codex_timestamp),
           last_codex_message: Map.get(metadata, :last_codex_message),
-          last_codex_event: Map.get(metadata, :last_codex_event)
+          last_codex_event: Map.get(metadata, :last_codex_event),
+          token_budget: Map.get(metadata, :token_budget)
         }
       end)
 
@@ -2485,6 +2488,55 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp blocked_issue_state(%{issue: %Issue{state: state}}), do: state
   defp blocked_issue_state(_metadata), do: nil
+
+  defp token_budget_snapshot(running_entry, now) when is_map(running_entry) do
+    max_tokens = Config.settings!().agent.max_total_tokens
+    total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+
+    cond do
+      not is_integer(max_tokens) or max_tokens <= 0 ->
+        nil
+
+      not is_integer(total_tokens) ->
+        nil
+
+      true ->
+        runtime_seconds = running_seconds(Map.get(running_entry, :started_at), now)
+        remaining_tokens = max(max_tokens - total_tokens, 0)
+        tokens_per_second = token_rate_per_second(total_tokens, runtime_seconds)
+
+        %{
+          max_total_tokens: max_tokens,
+          total_tokens: total_tokens,
+          remaining_tokens: remaining_tokens,
+          used_percent: token_budget_used_percent(total_tokens, max_tokens),
+          tokens_per_second: tokens_per_second,
+          projected_exhaustion_seconds: projected_budget_exhaustion_seconds(remaining_tokens, tokens_per_second)
+        }
+    end
+  end
+
+  defp token_budget_snapshot(_running_entry, _now), do: nil
+
+  defp token_rate_per_second(total_tokens, runtime_seconds)
+       when is_integer(total_tokens) and is_integer(runtime_seconds) and runtime_seconds > 0 do
+    total_tokens / runtime_seconds
+  end
+
+  defp token_rate_per_second(_total_tokens, _runtime_seconds), do: 0.0
+
+  defp token_budget_used_percent(total_tokens, max_tokens) when is_integer(max_tokens) and max_tokens > 0 do
+    round(total_tokens * 100 / max_tokens)
+  end
+
+  defp projected_budget_exhaustion_seconds(0, _tokens_per_second), do: 0
+
+  defp projected_budget_exhaustion_seconds(remaining_tokens, tokens_per_second)
+       when is_integer(remaining_tokens) and is_number(tokens_per_second) and tokens_per_second > 0 do
+    ceil(remaining_tokens / tokens_per_second)
+  end
+
+  defp projected_budget_exhaustion_seconds(_remaining_tokens, _tokens_per_second), do: nil
 
   defp integrate_codex_update(running_entry, %{event: event, timestamp: timestamp} = update) do
     token_delta = extract_token_delta(running_entry, update)

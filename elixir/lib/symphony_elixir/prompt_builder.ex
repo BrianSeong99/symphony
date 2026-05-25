@@ -30,6 +30,7 @@ defmodule SymphonyElixir.PromptBuilder do
       @render_opts
     )
     |> IO.iodata_to_binary()
+    |> append_context_hygiene_rules()
   end
 
   defp prompt_mode(opts) do
@@ -69,6 +70,7 @@ defmodule SymphonyElixir.PromptBuilder do
       "",
       "Execution rules:",
       "- Work only in the current repository worktree.",
+      context_hygiene_rule(),
       "- Verify this is a real git worktree before edits: `git rev-parse --git-dir` and `git rev-parse --git-common-dir` must differ.",
       "- Read nearest `AGENTS.md`, `CLAUDE.md`, `elixir/AGENTS.md`, and repo PR/validation guidance before public artifacts.",
       "- Do not add AI attribution to commits, PRs, issues, comments, README files, or other public copy.",
@@ -131,5 +133,36 @@ defmodule SymphonyElixir.PromptBuilder do
     else
       prompt
     end
+  end
+
+  defp append_context_hygiene_rules(prompt) do
+    prompt <> "\n\n" <> context_hygiene_section()
+  end
+
+  defp context_hygiene_section do
+    [
+      "## Context hygiene",
+      "",
+      context_hygiene_rule(),
+      "- Do not install dependencies during initial exploration. Install or build only after you know the validation path needs it.",
+      "- Prefer targeted file reads and `rg` searches over broad directory listings."
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp context_hygiene_rule do
+    patterns =
+      Config.settings!().workspace.context_exclude_patterns
+      |> List.wrap()
+      |> Enum.map(&to_string/1)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+      |> Enum.join(", ")
+
+    "- Avoid dependency, cache, build, coverage, and generated-artifact paths unless the issue explicitly requires them: #{patterns}."
+  rescue
+    ArgumentError ->
+      "- Avoid dependency, cache, build, coverage, and generated-artifact paths unless the issue explicitly requires them."
   end
 end

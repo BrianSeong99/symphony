@@ -105,6 +105,7 @@ defmodule SymphonyElixir.TestSupport do
           workspace_source_repo: nil,
           workspace_base_ref: "origin/main",
           workspace_branch_prefix: "symphony",
+          workspace_context_exclude_patterns: nil,
           worker_ssh_hosts: [],
           worker_max_concurrent_agents_per_host: nil,
           max_concurrent_agents: 10,
@@ -152,6 +153,7 @@ defmodule SymphonyElixir.TestSupport do
     workspace_source_repo = Keyword.get(config, :workspace_source_repo)
     workspace_base_ref = Keyword.get(config, :workspace_base_ref)
     workspace_branch_prefix = Keyword.get(config, :workspace_branch_prefix)
+    workspace_context_exclude_patterns = Keyword.get(config, :workspace_context_exclude_patterns)
     worker_ssh_hosts = Keyword.get(config, :worker_ssh_hosts)
     worker_max_concurrent_agents_per_host = Keyword.get(config, :worker_max_concurrent_agents_per_host)
     max_concurrent_agents = Keyword.get(config, :max_concurrent_agents)
@@ -202,6 +204,7 @@ defmodule SymphonyElixir.TestSupport do
         "  source_repo: #{yaml_value(workspace_source_repo)}",
         "  base_ref: #{yaml_value(workspace_base_ref)}",
         "  branch_prefix: #{yaml_value(workspace_branch_prefix)}",
+        "  context_exclude_patterns: #{yaml_value(workspace_context_exclude_patterns)}",
         worker_yaml(worker_ssh_hosts, worker_max_concurrent_agents_per_host),
         "agent:",
         "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",

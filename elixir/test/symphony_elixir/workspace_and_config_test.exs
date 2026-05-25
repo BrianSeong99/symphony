@@ -81,6 +81,66 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "workspace config includes default context hygiene exclusions" do
+    write_workflow_file!(Workflow.workflow_file_path())
+
+    settings = Config.settings!()
+
+    assert "node_modules/" in settings.workspace.context_exclude_patterns
+    assert ".next/" in settings.workspace.context_exclude_patterns
+    assert "dist/" in settings.workspace.context_exclude_patterns
+    assert "out/" in settings.workspace.context_exclude_patterns
+    assert "coverage/" in settings.workspace.context_exclude_patterns
+  end
+
+  test "git worktree setup writes local context hygiene excludes without dirtying the workspace" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-context-hygiene-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      source_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+
+      File.mkdir_p!(source_repo)
+      File.write!(Path.join(source_repo, "README.md"), "source\n")
+      System.cmd("git", ["-C", source_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", source_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", source_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      System.cmd("git", ["-C", source_repo, "commit", "-m", "initial"])
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        workspace_source_repo: source_repo,
+        workspace_base_ref: "main",
+        workspace_context_exclude_patterns: ["node_modules/", ".next/", "coverage/"]
+      )
+
+      assert {:ok, workspace} = Workspace.create_for_issue("GH-353")
+      File.mkdir_p!(Path.join(workspace, "node_modules"))
+      File.mkdir_p!(Path.join(workspace, ".next"))
+      File.mkdir_p!(Path.join(workspace, "coverage"))
+      File.write!(Path.join([workspace, "node_modules", "large.txt"]), "ignored\n")
+      File.write!(Path.join([workspace, ".next", "artifact.txt"]), "ignored\n")
+      File.write!(Path.join([workspace, "coverage", "lcov.info"]), "ignored\n")
+
+      {exclude_path, 0} = System.cmd("git", ["-C", workspace, "rev-parse", "--git-path", "info/exclude"])
+      exclude = File.read!(String.trim(exclude_path))
+
+      assert exclude =~ "# BEGIN Symphony context hygiene"
+      assert exclude =~ "node_modules/"
+      assert exclude =~ ".next/"
+      assert exclude =~ "coverage/"
+
+      assert {"", 0} = System.cmd("git", ["-C", workspace, "status", "--porcelain=v1"])
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "workspace recreates stale git worktree when branch does not match configured issue branch" do
     test_root =
       Path.join(

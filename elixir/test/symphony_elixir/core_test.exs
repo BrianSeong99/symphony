@@ -114,11 +114,12 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(workspace, "source_repo") =~ "symphony-homelab-deployment"
     assert Map.get(workspace, "base_ref") == "brian/main"
     assert Map.get(workspace, "branch_prefix") == "brian/symphony"
+    assert "node_modules/" in Map.get(workspace, "context_exclude_patterns")
+    assert ".next/" in Map.get(workspace, "context_exclude_patterns")
+    assert "coverage/" in Map.get(workspace, "context_exclude_patterns")
     assert Map.get(hooks, "after_create") =~ "git remote set-url origin https://github.com/BrianSeong99/symphony.git"
     assert Map.get(hooks, "after_create") =~ "git remote set-url upstream https://github.com/openai/symphony.git"
-    assert Map.get(hooks, "after_create") =~ "run_mix()"
-    assert Map.get(hooks, "after_create") =~ "run_mix deps.get"
-    assert Map.get(hooks, "after_create") =~ "mix \"$@\""
+    refute Map.get(hooks, "after_create") =~ "deps.get"
     assert Map.get(hooks, "before_run") =~ "git rev-parse --git-dir"
     assert Map.get(agent, "no_progress_timeout_ms") == 90_000
     assert Map.get(agent, "no_progress_max_tokens") == 220_000
@@ -1299,7 +1300,10 @@ defmodule SymphonyElixir.CoreTest do
       ]
     }
 
-    assert PromptBuilder.build_prompt(issue) == "Ticket MT-701"
+    prompt = PromptBuilder.build_prompt(issue)
+
+    assert prompt =~ "Ticket MT-701"
+    assert prompt =~ "Context hygiene"
   end
 
   test "prompt builder uses strict variable rendering" do
@@ -1490,7 +1494,8 @@ defmodule SymphonyElixir.CoreTest do
 
     prompt = PromptBuilder.build_prompt(issue, attempt: 2)
 
-    assert prompt == "Retry #2"
+    assert prompt =~ "Retry #2"
+    assert prompt =~ "Context hygiene"
   end
 
   test "agent runner keeps workspace after successful codex run" do

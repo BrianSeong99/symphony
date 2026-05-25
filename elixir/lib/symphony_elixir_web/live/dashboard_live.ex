@@ -325,6 +325,10 @@ defmodule SymphonyElixirWeb.DashboardLive do
                       <div class="token-stack numeric">
                         <span>Total: <%= format_int(entry.tokens.total_tokens) %></span>
                         <span class="muted">In <%= format_int(entry.tokens.input_tokens) %> / Out <%= format_int(entry.tokens.output_tokens) %></span>
+                        <span :if={token_budget(entry)} class="muted">
+                          <% budget = token_budget(entry) %>
+                          Budget <%= format_int(budget.remaining_tokens) %> left · <%= budget.used_percent %>% · <%= format_budget_projection(budget.projected_exhaustion_seconds) %>
+                        </span>
                       </div>
                     </td>
                   </tr>
@@ -549,6 +553,13 @@ defmodule SymphonyElixirWeb.DashboardLive do
     secs = rem(whole_seconds, 60)
     "#{mins}m #{secs}s"
   end
+
+  defp format_budget_projection(seconds) when is_number(seconds),
+    do: format_runtime_seconds(seconds)
+
+  defp format_budget_projection(_seconds), do: "n/a"
+
+  defp token_budget(entry), do: map_get(entry, :token_budget)
 
   defp runtime_seconds_from_started_at(%DateTime{} = started_at, %DateTime{} = now) do
     DateTime.diff(now, started_at, :second)

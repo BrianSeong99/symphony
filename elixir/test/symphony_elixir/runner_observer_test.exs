@@ -15,6 +15,14 @@ defmodule SymphonyElixir.RunnerObserverTest do
              :external_service_failure
   end
 
+  test "classifies package-manager setup in the wrong directory as requirements mismatch" do
+    failure = """
+    ERR_PNPM_NO_PKG_MANIFEST No package.json found in /Users/brianseong/Develop/Labs/worktrees/GH-353
+    """
+
+    assert RunnerObserver.classify_failure(failure) == :requirements_mismatch
+  end
+
   test "classifies connector approval elicitations as non-retryable permission loops" do
     failure =
       ~s|{:turn_input_required, %{"method" => "mcpServer/elicitation/request", "params" => %{"_meta" => %{"codex_approval_kind" => "mcp_tool_call", "connector_name" => "GitHub", "tool_title" => "create_branch"}, "message" => "Allow GitHub to create a branch?"}}}|
