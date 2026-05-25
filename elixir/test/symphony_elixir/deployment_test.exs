@@ -80,8 +80,13 @@ defmodule SymphonyElixir.DeploymentTest do
     assert File.exists?(Path.join(@root, "bin/homelab-smoke.sh"))
     assert File.exists?(Path.join(@root, "bin/symphony-native"))
     assert File.exists?(Path.join(@root, "ops/launchd/ai.symphony.runner.plist"))
-    assert File.read!(Path.join(@root, "bin/symphony-native")) =~ "run_elixir mix escript.build"
-    refute File.read!(Path.join(@root, "bin/symphony-native")) =~ "[ ! -x ./bin/symphony ]"
+    native_script = File.read!(Path.join(@root, "bin/symphony-native"))
+
+    assert native_script =~ "run_elixir mix escript.build"
+    assert native_script =~ "$HOME/.nvm"
+    assert native_script =~ "$HOME/.pyenv/shims"
+    assert native_script =~ "$HOME/.cargo/bin"
+    refute native_script =~ "[ ! -x ./bin/symphony ]"
     assert launchd_plist =~ "/Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/bin/symphony-native"
     assert launchd_plist =~ "/tmp/ai.symphony.runner.out.log"
     assert launchd_plist =~ "/tmp/ai.symphony.runner.err.log"

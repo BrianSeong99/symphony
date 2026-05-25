@@ -14,7 +14,23 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
-export PATH="${SYMPHONY_NATIVE_PATH:-/Users/brianseong/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
+DEFAULT_NATIVE_PATH="$HOME/.local/bin:$HOME/.pyenv/shims:$HOME/go/bin:$HOME/.cargo/bin:$HOME/.foundry/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+if [ -z "${SYMPHONY_NATIVE_PATH:-}" ]; then
+  NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+  if [ -n "${NVM_BIN:-}" ] && [ -d "$NVM_BIN" ]; then
+    DEFAULT_NATIVE_PATH="$NVM_BIN:$DEFAULT_NATIVE_PATH"
+  elif [ -d "$NVM_DIR/versions/node" ]; then
+    for node_bin in "$NVM_DIR"/versions/node/*/bin; do
+      if [ -d "$node_bin" ]; then
+        DEFAULT_NATIVE_PATH="$node_bin:$DEFAULT_NATIVE_PATH"
+      fi
+    done
+  fi
+fi
+
+export PATH="${SYMPHONY_NATIVE_PATH:-$DEFAULT_NATIVE_PATH}"
 export MIX_ENV="${MIX_ENV:-dev}"
 export SYMPHONY_REPO_ENABLED="${SYMPHONY_REPO_ENABLED:-false}"
 export SYMPHONY_SERVER_HOST="${SYMPHONY_SERVER_HOST:-0.0.0.0}"
