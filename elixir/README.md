@@ -52,6 +52,7 @@ silently stuck.
    - When creating a workflow based on this repo, note that it depends on non-standard Linear
      issue statuses: "Rework", "Human Review", and "Merging". You can customize them in
      Team Settings → Workflow in Linear.
+   - For GitHub-backed Homelab trials, start from `WORKFLOW.homelab.github.example.md`.
 6. Follow the instructions below to install the required runtime dependencies and start the service.
 
 ## Prerequisites
@@ -184,6 +185,9 @@ when Symphony reaches a terminal state.
 Notes:
 
 - If a value is missing, defaults are used.
+- `workspace.context_exclude_patterns` writes a local git exclude block for linked worktrees so
+  dependency, cache, build, coverage, and generated-artifact paths such as `node_modules/`, `.next/`,
+  `dist/`, `out/`, and `coverage/` do not pollute agent-visible status.
 - Safer Codex defaults are used when policy fields are omitted:
   - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
   - `codex.thread_sandbox` defaults to `workspace-write`
@@ -211,10 +215,8 @@ Notes:
   intentional diagnostics.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
-- Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
-  `git clone ... .` there, along with any other setup commands you need.
-- If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
-  the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
+- Use `hooks.after_create` only for deterministic workspace setup such as remotes or fetches. Avoid
+  installing dependencies there; let the planner choose installs once it knows the validation path.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
 - `tracker.repository` is required for `tracker.kind: github` and can also read from
   `GITHUB_REPOSITORY`.

@@ -7,6 +7,8 @@ defmodule SymphonyElixir.Workspace do
   alias SymphonyElixir.{Config, PathSafety, RunLog, SSH}
 
   @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
+  @context_hygiene_begin "# BEGIN Symphony context hygiene"
+  @context_hygiene_end "# END Symphony context hygiene"
 
   @type worker_host :: String.t() | nil
 
@@ -22,6 +24,7 @@ defmodule SymphonyElixir.Workspace do
            :ok <- validate_workspace_path(workspace, worker_host),
            {:ok, workspace, created?, workspace_kind} <-
              ensure_workspace(workspace, worker_host, safe_id, issue_context),
+           :ok <- maybe_apply_context_hygiene(workspace, workspace_kind, worker_host),
            :ok <- maybe_log_workspace_ready(issue_context, workspace, worker_host, workspace_kind),
            :ok <- maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
         {:ok, workspace}
@@ -271,6 +274,97 @@ defmodule SymphonyElixir.Workspace do
     else
       {:error, {:workspace_not_git_worktree, workspace}}
     end
+  end
+
+  defp maybe_apply_context_hygiene(workspace, :git_worktree, nil) do
+    patterns = context_exclude_patterns()
+
+    if patterns == [] do
+      :ok
+    else
+      with {:ok, exclude_path} <- git_path(workspace, "info/exclude") do
+        write_context_hygiene_excludes(exclude_path, patterns)
+      end
+    end
+  end
+
+  defp maybe_apply_context_hygiene(_workspace, _workspace_kind, _worker_host), do: :ok
+
+  defp context_exclude_patterns do
+    Config.settings!().workspace.context_exclude_patterns
+    |> List.wrap()
+    |> Enum.map(&to_string/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp git_path(workspace, git_path) do
+    case System.cmd("git", ["-C", workspace, "rev-parse", "--git-path", git_path], stderr_to_stdout: true) do
+      {path, 0} ->
+        path =
+          path
+          |> String.trim()
+          |> expand_git_path(workspace)
+
+        {:ok, path}
+
+      {output, status} ->
+        {:error, {:git_path_failed, workspace, git_path, status, output}}
+    end
+  end
+
+  defp expand_git_path(path, workspace) do
+    if Path.type(path) == :absolute do
+      Path.expand(path)
+    else
+      Path.expand(path, workspace)
+    end
+  end
+
+  defp write_context_hygiene_excludes(exclude_path, patterns) do
+    File.mkdir_p!(Path.dirname(exclude_path))
+
+    existing =
+      case File.read(exclude_path) do
+        {:ok, content} -> content
+        {:error, :enoent} -> ""
+        {:error, reason} -> raise File.Error, reason: reason, action: "read file", path: exclude_path
+      end
+
+    content =
+      existing
+      |> remove_context_hygiene_block()
+      |> append_context_hygiene_block(patterns)
+
+    File.write!(exclude_path, content)
+    :ok
+  end
+
+  defp remove_context_hygiene_block(content) do
+    Regex.replace(~r/#{Regex.escape(@context_hygiene_begin)}\n.*?#{Regex.escape(@context_hygiene_end)}\n?/s, content, "")
+  end
+
+  defp append_context_hygiene_block(content, patterns) do
+    content
+    |> ensure_trailing_newline()
+    |> Kernel.<>(
+      [
+        @context_hygiene_begin,
+        "# Added by Symphony to keep dependency and build artifacts out of agent-visible git status.",
+        patterns,
+        @context_hygiene_end,
+        ""
+      ]
+      |> List.flatten()
+      |> Enum.join("\n")
+    )
+  end
+
+  defp ensure_trailing_newline(""), do: ""
+
+  defp ensure_trailing_newline(content) do
+    if String.ends_with?(content, "\n"), do: content, else: content <> "\n"
   end
 
   defp git_worktree?(workspace) when is_binary(workspace) do

@@ -25,16 +25,29 @@ workspace:
   source_repo: ~/Develop/Labs/worktrees/symphony-homelab-deployment
   base_ref: brian/main
   branch_prefix: brian/symphony
+  context_exclude_patterns:
+    - node_modules/
+    - .next/
+    - dist/
+    - out/
+    - build/
+    - coverage/
+    - .turbo/
+    - .cache/
+    - .parcel-cache/
+    - .vite/
+    - .pytest_cache/
+    - __pycache__/
+    - target/
+    - .venv/
+    - venv/
+    - _build/
+    - deps/
+    - "*.log"
+    - "*.tmp"
+    - "*.tsbuildinfo"
 hooks:
   after_create: |
-    run_mix() {
-      if command -v mise >/dev/null 2>&1; then
-        mise trust
-        mise exec -- mix "$@"
-      else
-        mix "$@"
-      fi
-    }
     if git remote get-url origin >/dev/null 2>&1; then
       git remote set-url origin https://github.com/BrianSeong99/symphony.git
     else
@@ -46,8 +59,6 @@ hooks:
       git remote add upstream https://github.com/openai/symphony.git
     fi
     git fetch origin main
-    cd elixir
-    run_mix deps.get
   before_run: |
     git_dir="$(git rev-parse --git-dir)"
     common_dir="$(git rev-parse --git-common-dir)"

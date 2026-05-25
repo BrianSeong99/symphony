@@ -387,6 +387,19 @@ Fields:
   - `~` is expanded.
   - Relative paths are resolved relative to the directory containing `WORKFLOW.md`.
   - The effective workspace root is normalized to an absolute path before use.
+- `source_repo` (path string or `$VAR`, OPTIONAL)
+  - When set, Symphony creates each issue workspace as a linked git worktree.
+- `base_ref` (string)
+  - Default: `origin/main`
+- `branch_prefix` (string)
+  - Default: `symphony`
+- `context_exclude_patterns` (list of strings)
+  - Default excludes dependency, cache, build, coverage, and generated-artifact paths such as
+    `node_modules/`, `.next/`, `dist/`, `out/`, `build/`, and `coverage/`.
+  - Local git worktrees SHOULD write these patterns to the worktree git exclude file so generated
+    dependency/build artifacts do not pollute agent-visible git status.
+  - Setup hooks SHOULD avoid dependency installs until the planner knows they are needed for the
+    issue's validation path.
 
 #### 5.3.4 `hooks` (object)
 
@@ -588,6 +601,10 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`
+- `workspace.source_repo`: optional source repository path for linked git worktrees
+- `workspace.base_ref`: git worktree base ref, default `origin/main`
+- `workspace.branch_prefix`: git worktree branch prefix, default `symphony`
+- `workspace.context_exclude_patterns`: list of dependency/build/cache/generated paths to exclude
 - `hooks.after_create`: shell script or null
 - `hooks.before_run`: shell script or null
 - `hooks.after_run`: shell script or null
@@ -1422,6 +1439,14 @@ Minimum endpoints:
             "input_tokens": 1200,
             "output_tokens": 800,
             "total_tokens": 2000
+          },
+          "token_budget": {
+            "max_total_tokens": 500000,
+            "total_tokens": 2000,
+            "remaining_tokens": 498000,
+            "used_percent": 0,
+            "tokens_per_second": 20.0,
+            "projected_exhaustion_seconds": 24900
           }
         }
       ],

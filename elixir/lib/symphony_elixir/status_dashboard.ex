@@ -19,7 +19,7 @@ defmodule SymphonyElixir.StatusDashboard do
   @running_stage_width 14
   @running_pid_width 8
   @running_age_width 12
-  @running_tokens_width 10
+  @running_tokens_width 17
   @running_session_width 14
   @running_event_default_width 44
   @running_event_min_width 12
@@ -362,6 +362,7 @@ defmodule SymphonyElixir.StatusDashboard do
              colorize("out #{format_count(codex_output_tokens)}", @ansi_yellow) <>
              colorize(" | ", @ansi_gray) <>
              colorize("total #{format_count(codex_total_tokens)}", @ansi_yellow),
+           format_budget_projection_line(running),
            colorize("│ Rate Limits: ", @ansi_bold) <> format_rate_limits(rate_limits),
            project_link_lines,
            project_refresh_line,
@@ -426,6 +427,42 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_project_refresh_line(_) do
     colorize("│ Next refresh: ", @ansi_bold) <> colorize("n/a", @ansi_gray)
   end
+
+  defp format_budget_projection_line(running) when is_list(running) do
+    running
+    |> Enum.flat_map(fn entry ->
+      case Map.get(entry, :token_budget) do
+        %{projected_exhaustion_seconds: seconds, used_percent: percent} = budget when is_integer(seconds) ->
+          [
+            %{
+              identifier: Map.get(entry, :identifier) || Map.get(entry, :issue_id) || "unknown",
+              seconds: seconds,
+              percent: percent,
+              tokens_per_second: Map.get(budget, :tokens_per_second)
+            }
+          ]
+
+        _ ->
+          []
+      end
+    end)
+    |> Enum.sort_by(& &1.seconds)
+    |> List.first()
+    |> case do
+      nil ->
+        []
+
+      budget ->
+        colorize("│ Budget: ", @ansi_bold) <>
+          colorize(to_string(budget.identifier), @ansi_cyan) <>
+          colorize(" #{budget.percent}% used", @ansi_yellow) <>
+          colorize(" | exhausted in ", @ansi_gray) <>
+          colorize(format_runtime_seconds(budget.seconds), @ansi_red) <>
+          colorize(" @ #{format_tps(budget.tokens_per_second || 0)} tps", @ansi_cyan)
+    end
+  end
+
+  defp format_budget_projection_line(_running), do: []
 
   defp linear_project_url(project_slug), do: "https://linear.app/project/#{project_slug}/issues"
 
@@ -594,13 +631,14 @@ defmodule SymphonyElixir.StatusDashboard do
     session = running_entry.session_id |> compact_session_id() |> format_cell(@running_session_width)
     pid = format_cell(running_entry.codex_app_server_pid || "n/a", @running_pid_width)
     total_tokens = running_entry.codex_total_tokens || 0
+    token_budget = Map.get(running_entry, :token_budget)
     runtime_seconds = running_entry.runtime_seconds || 0
     turn_count = Map.get(running_entry, :turn_count, 0)
     age = format_cell(format_runtime_and_turns(runtime_seconds, turn_count), @running_age_width)
     event = running_entry.last_codex_event || "none"
     event_label = format_cell(summarize_message(running_entry.last_codex_message), running_event_width)
 
-    tokens = format_count(total_tokens) |> format_cell(@running_tokens_width, :right)
+    tokens = format_budget_tokens(total_tokens, token_budget) |> format_cell(@running_tokens_width, :right)
 
     status_color =
       case event do
@@ -736,6 +774,13 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp format_count(value), do: to_string(value)
 
+  defp format_budget_tokens(total_tokens, %{max_total_tokens: max_tokens})
+       when is_integer(max_tokens) and max_tokens > 0 do
+    "#{format_count(total_tokens)}/#{format_count(max_tokens)}"
+  end
+
+  defp format_budget_tokens(total_tokens, _token_budget), do: format_count(total_tokens)
+
   defp running_table_header_row(running_event_width) do
     header =
       [
@@ -743,7 +788,7 @@ defmodule SymphonyElixir.StatusDashboard do
         format_cell("STAGE", @running_stage_width),
         format_cell("PID", @running_pid_width),
         format_cell("AGE / TURN", @running_age_width),
-        format_cell("TOKENS", @running_tokens_width),
+        format_cell("TOKENS / BUDGET", @running_tokens_width),
         format_cell("SESSION", @running_session_width),
         format_cell("EVENT", running_event_width)
       ]

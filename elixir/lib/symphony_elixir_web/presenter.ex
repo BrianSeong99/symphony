@@ -120,6 +120,7 @@ defmodule SymphonyElixirWeb.Presenter do
         total_tokens: entry.codex_total_tokens
       }
     }
+    |> maybe_put(:token_budget, Map.get(entry, :token_budget))
     |> put_observer_fields(entry)
   end
 
@@ -150,6 +151,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(entry.last_codex_message),
       last_event_at: iso8601(entry.last_codex_timestamp)
     }
+    |> maybe_put(:token_budget, Map.get(entry, :token_budget))
     |> put_observer_fields(entry)
     |> put_writeback_fields(entry)
   end
@@ -171,6 +173,7 @@ defmodule SymphonyElixirWeb.Presenter do
         total_tokens: running.codex_total_tokens
       }
     }
+    |> maybe_put(:token_budget, Map.get(running, :token_budget))
     |> put_observer_fields(running)
   end
 
@@ -197,6 +200,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(blocked.last_codex_message),
       last_event_at: iso8601(blocked.last_codex_timestamp)
     }
+    |> maybe_put(:token_budget, Map.get(blocked, :token_budget))
     |> put_observer_fields(blocked)
     |> put_writeback_fields(blocked)
   end

@@ -166,6 +166,38 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
     refute backoff_line =~ "\\n"
   end
 
+  test "dashboard renders nearest projected token budget exhaustion" do
+    snapshot_data =
+      {:ok,
+       %{
+         running: [
+           running_entry(%{
+             identifier: "GH-353",
+             codex_total_tokens: 350_000,
+             token_budget: %{
+               max_total_tokens: 500_000,
+               total_tokens: 350_000,
+               remaining_tokens: 150_000,
+               used_percent: 70,
+               tokens_per_second: 5_833.3,
+               projected_exhaustion_seconds: 26
+             }
+           })
+         ],
+         retrying: [],
+         codex_totals: %{input_tokens: 300_000, output_tokens: 50_000, total_tokens: 350_000, seconds_running: 60},
+         rate_limits: nil
+       }}
+
+    rendered = render_snapshot(snapshot_data, 5_833.3)
+
+    assert rendered =~ "Budget:"
+    assert rendered =~ "GH-353"
+    assert rendered =~ "70% used"
+    assert rendered =~ "0m 26s"
+    assert rendered =~ "350,000/500,000"
+  end
+
   test "snapshot fixture: unlimited credits variant" do
     snapshot_data =
       {:ok,

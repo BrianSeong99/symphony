@@ -183,15 +183,15 @@ defmodule SymphonyElixir.SSHTest do
 
     File.mkdir_p!(fake_bin_dir)
 
-    File.write!(
-      fake_ssh,
+    script =
       script ||
         """
         #!/bin/sh
         printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
         exit 0
         """
-    )
+
+    File.write!(fake_ssh, String.trim_leading(script))
 
     File.chmod!(fake_ssh, 0o755)
     System.put_env("PATH", fake_bin_dir <> ":" <> (System.get_env("PATH") || ""))
