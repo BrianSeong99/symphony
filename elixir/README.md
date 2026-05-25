@@ -182,6 +182,9 @@ pickup through `active_labels`, normalizes GitHub issues into Symphony issue
 records, writes a single marked run-log comment, and closes the GitHub issue
 when Symphony reaches a terminal state.
 
+For the Homelab and WPRC week trial, see
+[`../docs/github-runner-week-trial.md`](../docs/github-runner-week-trial.md).
+
 Notes:
 
 - If a value is missing, defaults are used.
