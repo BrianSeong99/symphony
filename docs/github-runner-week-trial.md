@@ -55,10 +55,15 @@ The runner guardrails remain active:
 
 - `max_retry_attempts: 3`
 - `startup_token_window_ms: 15000`
-- `startup_max_total_tokens: 100000`
-- `max_total_tokens: 150000`
+- `startup_max_total_tokens: 150000`
+- `max_total_tokens: 500000`
 - no-progress timeout and token classifiers
 - mandatory git worktree check before each run
+
+These budgets are runaway guards, not quality ceilings. The runner should spend
+what the task needs for good work, while classifying wasteful patterns such as
+full log ingestion, repeated broad context reads, no-progress loops, and
+validation retries that do not change the plan.
 
 ## Starting A Runner
 
