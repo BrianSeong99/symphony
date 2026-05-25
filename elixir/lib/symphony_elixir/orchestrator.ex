@@ -282,8 +282,11 @@ defmodule SymphonyElixir.Orchestrator do
           |> apply_codex_token_delta(token_delta)
           |> apply_codex_rate_limits(update)
 
+        state = put_running_entry(state, issue_id, updated_running_entry)
+        state = maybe_block_hard_token_budget_issue(state, issue_id, updated_running_entry)
+
         notify_dashboard()
-        {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
+        {:noreply, state}
     end
   end
 
@@ -851,6 +854,46 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  defp maybe_block_hard_token_budget_issue(%State{} = state, issue_id, running_entry) do
+    max_tokens = Config.settings!().agent.max_total_tokens
+    total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+
+    cond do
+      max_tokens <= 0 ->
+        state
+
+      not is_integer(total_tokens) ->
+        state
+
+      total_tokens <= max_tokens ->
+        state
+
+      true ->
+        block_hard_token_budget_issue(state, issue_id, running_entry, max_tokens, total_tokens)
+    end
+  end
+
+  defp block_hard_token_budget_issue(state, issue_id, running_entry, max_tokens, total_tokens) do
+    identifier = Map.get(running_entry, :identifier, issue_id)
+    session_id = running_entry_session_id(running_entry)
+    classification = :token_budget_exceeded
+
+    reason = "token_budget_exceeded total_tokens=#{total_tokens} max_total_tokens=#{max_tokens}"
+    failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
+
+    Logger.warning("Issue blocked by hard token budget: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} #{reason}")
+
+    running_entry =
+      running_entry
+      |> Map.put(:classification, classification)
+      |> Map.put(:failure_fingerprint, failure_fingerprint)
+      |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
+
+    state
+    |> record_session_completion_totals(running_entry)
+    |> stop_and_block_issue(issue_id, running_entry, reason)
+  end
+
   defp maybe_block_no_progress_issue(state, issue_id, running_entry, now, timeout_ms, max_tokens) do
     if Map.has_key?(state.blocked, issue_id) do
       state
@@ -1266,7 +1309,7 @@ defmodule SymphonyElixir.Orchestrator do
         :ok
 
       {:error, :not_found} ->
-        Process.exit(pid, :shutdown)
+        Process.exit(pid, :kill)
     end
   end
 
