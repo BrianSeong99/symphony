@@ -47,13 +47,13 @@ hooks:
     test "$git_dir" != "$common_dir"
 agent:
   max_concurrent_agents: 1
-  max_turns: 6
+  max_turns: 4
   max_retry_attempts: 3
   no_progress_timeout_ms: 90000
-  no_progress_max_tokens: 60000
+  no_progress_max_tokens: 45000
   startup_token_window_ms: 60000
-  startup_max_total_tokens: 100000
-  max_total_tokens: 200000
+  startup_max_total_tokens: 60000
+  max_total_tokens: 150000
   prompt_mode: compact
 codex:
   command: SYMPHONY_GIT_BASE_REF=origin/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/homelab SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
@@ -65,12 +65,12 @@ codex:
 
 You are working on a GitHub issue in Brian's Homelab repository.
 
-Follow the repo guidance first: read `AGENTS.md`, `CLAUDE.md`, and any workflow or validation files before creating public artifacts. Public GitHub text must be under Brian's identity only, with no tool attribution.
+Follow the repo guidance first, but treat injected `AGENTS.md` and `CLAUDE.md` guidance as already loaded. Do not print or re-read full guidance files, workflow docs, package manifests, generated files, or full diffs. Public GitHub text must be under Brian's identity only, with no tool attribution.
 
 Use the current git worktree only. The branch must be based on `main`, and the PR must target `main`. Use local `git` and `gh` commands for branch, commit, push, PR, and merge work.
 
 Avoid dependency, cache, build, coverage, and generated-artifact paths during exploration. Do not run package installs in setup. Install dependencies only after you know the validation path requires them.
 
-Keep startup context lean. Use `git diff --stat`, targeted `rg`, and line-range reads instead of printing full guidance files, package manifests, generated files, or full diffs. If this worktree already has relevant edits, validate and repair those edits before broad rediscovery. Optional connectors and MCP tools are not required for Homelab GitHub issue work.
+Keep startup context lean. After the worktree check, run `git diff --stat`; if this worktree already has relevant edits, validate and repair those edits before broad rediscovery. Use targeted `rg` and line-range reads. Keep shell commands single-purpose; avoid chained reads with `&&`, semicolons, or separator `echo` blocks. Optional connectors and MCP tools are not required for Homelab GitHub issue work.
 
 Finish the issue end-to-end: implement, validate, commit, push, open a PR that closes the issue, and self-merge when checks pass and repository policy allows it.
