@@ -349,7 +349,7 @@ Fields:
 
 - `kind` (string)
   - REQUIRED for dispatch.
-  - Current supported value: `linear`
+  - Current supported values: `linear`, `github`, `memory`
 - `endpoint` (string)
   - Default for `tracker.kind == "linear"`: `https://api.linear.app/graphql`
 - `api_key` (string)
@@ -358,6 +358,13 @@ Fields:
   - If `$VAR_NAME` resolves to an empty string, treat the key as missing.
 - `project_slug` (string)
   - REQUIRED for dispatch when `tracker.kind == "linear"`.
+- `repository` (string)
+  - REQUIRED for dispatch when `tracker.kind == "github"`.
+  - Format: `owner/name`.
+  - Canonical environment variable for `tracker.kind == "github"`: `GITHUB_REPOSITORY`.
+- `active_labels` (list of strings)
+  - Optional label scope for `tracker.kind == "github"`.
+  - GitHub pickup SHOULD be label-scoped for unattended runners.
 - `active_states` (list of strings)
   - Default: `Todo`, `In Progress`
 - `terminal_states` (list of strings)
@@ -560,8 +567,9 @@ Validation checks:
 
 - Workflow file can be loaded and parsed.
 - `tracker.kind` is present and supported.
-- `tracker.api_key` is present after `$` resolution.
+- `tracker.api_key` is present after `$` resolution when required by the selected tracker kind.
 - `tracker.project_slug` is present when REQUIRED by the selected tracker kind.
+- `tracker.repository` is present when REQUIRED by the selected tracker kind.
 - `codex.command` is present and non-empty.
 
 ### 6.4 Core Config Fields Summary (Cheat Sheet)
@@ -570,10 +578,12 @@ This section is intentionally redundant so a coding agent can implement the conf
 Extension fields are documented in the extension section that defines them. Core conformance does
 not require recognizing or validating extension fields unless that extension is implemented.
 
-- `tracker.kind`: string, REQUIRED, currently `linear`
+- `tracker.kind`: string, REQUIRED, currently `linear`, `github`, or `memory`
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`
+- `tracker.repository`: string, REQUIRED when `tracker.kind=github`, default env `GITHUB_REPOSITORY`
+- `tracker.active_labels`: list of strings, optional GitHub issue pickup scope
 - `tracker.active_states`: list of strings, default `["Todo", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
@@ -1940,8 +1950,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Invalid YAML front matter returns typed error
 - Front matter non-map returns typed error
 - Config defaults apply when OPTIONAL values are missing
-- `tracker.kind` validation enforces currently supported kind (`linear`)
-- `tracker.api_key` works (including `$VAR` indirection)
+- `tracker.kind` validation enforces currently supported kinds (`linear`, `github`, `memory`)
+- `tracker.api_key` works when required, including `$VAR` indirection
+- `tracker.repository` is required for GitHub trackers and can default from `GITHUB_REPOSITORY`
 - `$VAR` resolution works for tracker API key and path values
 - `~` path expansion works
 - `codex.command` is preserved as a shell command string
@@ -1966,8 +1977,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 ### 17.3 Issue Tracker Client
 
-- Candidate issue fetch uses active states and project slug
+- Candidate issue fetch uses active states/project slug for Linear or configured labels for GitHub
 - Linear query uses the specified project filter field (`slugId`)
+- GitHub query uses the configured repository and label scope
 - Empty `fetch_issues_by_states([])` returns empty without API call
 - Pagination preserves order across multiple pages
 - Blockers are normalized from inverse relations of type `blocks`

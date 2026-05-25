@@ -2,6 +2,11 @@
 tracker:
   kind: linear
   project_slug: "symphony-runtime-8653c153d70c"
+  # GitHub fallback:
+  # kind: github
+  # repository: "BrianSeong99/symphony"
+  # active_labels:
+  #   - symphony-ready
   active_states:
     - Todo
     - In Progress
@@ -121,6 +126,13 @@ PR linking, commit linking, checks, reviews, and diffs. Do not treat that as
 GitHub Issues Sync. GitHub Issues Sync is disabled by default and is allowed
 only when the Symphony operating model marks the project with
 `github_issues_sync: explicit_exception`.
+
+When Linear is unavailable or rate-limited, Symphony can use `tracker.kind:
+github` as the active pipeline surface. The GitHub tracker uses Brian's local
+`gh` CLI session, fetches open issues from `tracker.repository`, scopes pickup
+through `tracker.active_labels`, writes runner logs to a marked issue comment,
+and closes issues only when Symphony reaches a terminal state. This is separate
+from Linear GitHub Issues Sync.
 
 {% if attempt %}
 Continuation context:
