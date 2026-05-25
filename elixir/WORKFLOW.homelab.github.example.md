@@ -51,7 +51,7 @@ agent:
   max_retry_attempts: 3
   no_progress_timeout_ms: 90000
   no_progress_max_tokens: 45000
-  startup_token_window_ms: 60000
+  startup_token_window_ms: 15000
   startup_max_total_tokens: 100000
   max_total_tokens: 150000
   prompt_mode: compact
