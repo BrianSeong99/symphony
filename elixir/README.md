@@ -92,6 +92,11 @@ bin/symphony-native
 `elixir/WORKFLOW.md`. The launchd template lives at
 `ops/launchd/ai.symphony.runner.plist`.
 
+When `SYMPHONY_NATIVE_PATH` is unset, the native launcher builds a host
+developer-tool PATH that includes Homebrew, local bins, pyenv shims, Cargo,
+Foundry, Go, and any installed nvm Node bins. Set `SYMPHONY_NATIVE_PATH` only
+when a deployment needs to fully override that default.
+
 Brian's default Mac Studio daemon is a dashboard/control-plane process for
 Symphony itself. It sets `SYMPHONY_RUNNER_ENABLED=false` so Symphony Linear
 issues are implemented directly by Brian's active coding session in git
