@@ -906,7 +906,15 @@ defmodule SymphonyElixir.Orchestrator do
         state
 
       true ->
-        block_startup_token_budget_issue(state, issue_id, running_entry, window_ms, max_tokens, total_tokens, elapsed_ms)
+        block_startup_token_budget_issue(
+          state,
+          issue_id,
+          running_entry,
+          window_ms,
+          max_tokens,
+          total_tokens,
+          elapsed_ms
+        )
     end
   end
 
