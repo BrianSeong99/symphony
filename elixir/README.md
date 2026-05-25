@@ -205,6 +205,10 @@ Notes:
   remote.
 - `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
+- `agent.max_total_tokens` is a hard per-run token budget for unattended sessions. When a run
+  exceeds it, Symphony stops the agent, preserves the worktree, classifies the block as
+  `token_budget_exceeded`, and writes evidence to the tracker issue. Set it to `0` only for
+  intentional diagnostics.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run

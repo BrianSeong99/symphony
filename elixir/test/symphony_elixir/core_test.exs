@@ -122,6 +122,7 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(hooks, "before_run") =~ "git rev-parse --git-dir"
     assert Map.get(agent, "no_progress_timeout_ms") == 90_000
     assert Map.get(agent, "no_progress_max_tokens") == 220_000
+    assert Map.get(agent, "max_total_tokens") == 500_000
     assert Map.get(agent, "prompt_mode") == "compact"
     assert Map.get(codex, "command") =~ "--dangerously-bypass-approvals-and-sandbox"
     assert Map.get(codex, "command") =~ "SYMPHONY_GIT_BASE_REF=brian/main"
