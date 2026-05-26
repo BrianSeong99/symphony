@@ -62,4 +62,8 @@ Useful current files:
   /Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/elixir/WORKFLOW.wprc-website.github.example.md
 - WPRC intelligence stack workflow:
   /Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/elixir/WORKFLOW.wprc-intelligence-stack.github.example.md
+- CFO workflow:
+  /Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/elixir/WORKFLOW.cfo.github.example.md
+- CMO workflow:
+  /Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/elixir/WORKFLOW.cmo.github.example.md
 ```

@@ -28,6 +28,8 @@ For the current trial, use the workflow examples in `elixir/`:
 - Homelab: `WORKFLOW.homelab.github.example.md`
 - WPRC website: `WORKFLOW.wprc-website.github.example.md`
 - WPRC intelligence stack: `WORKFLOW.wprc-intelligence-stack.github.example.md`
+- CFO / Finance-OS: `WORKFLOW.cfo.github.example.md`
+- CMO / Marketing-OS: `WORKFLOW.cmo.github.example.md`
 
 Each workflow monitors one repository. Use one runner process per repository
 lane, with separate worktree roots and logs.
