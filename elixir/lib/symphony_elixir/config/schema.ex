@@ -221,6 +221,8 @@ defmodule SymphonyElixir.Config.Schema do
       field(:no_progress_max_tokens, :integer, default: 300_000)
       field(:startup_token_window_ms, :integer, default: 0)
       field(:startup_max_total_tokens, :integer, default: 0)
+      field(:startup_progress_timeout_ms, :integer, default: 0)
+      field(:startup_progress_max_tokens, :integer, default: 0)
       field(:max_total_tokens, :integer, default: 500_000)
       field(:prompt_mode, :string, default: "workflow")
     end
@@ -240,6 +242,8 @@ defmodule SymphonyElixir.Config.Schema do
           :no_progress_max_tokens,
           :startup_token_window_ms,
           :startup_max_total_tokens,
+          :startup_progress_timeout_ms,
+          :startup_progress_max_tokens,
           :max_total_tokens,
           :prompt_mode
         ],
@@ -253,6 +257,8 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:no_progress_max_tokens, greater_than_or_equal_to: 0)
       |> validate_number(:startup_token_window_ms, greater_than_or_equal_to: 0)
       |> validate_number(:startup_max_total_tokens, greater_than_or_equal_to: 0)
+      |> validate_number(:startup_progress_timeout_ms, greater_than_or_equal_to: 0)
+      |> validate_number(:startup_progress_max_tokens, greater_than_or_equal_to: 0)
       |> validate_number(:max_total_tokens, greater_than_or_equal_to: 0)
       |> validate_inclusion(:prompt_mode, ["workflow", "compact"])
       |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)

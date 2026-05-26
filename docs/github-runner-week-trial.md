@@ -60,6 +60,8 @@ The runner guardrails remain active:
 - `max_retry_attempts: 3`
 - `startup_token_window_ms: 15000`
 - `startup_max_total_tokens: 150000`
+- `startup_progress_timeout_ms: 60000`
+- `startup_progress_max_tokens: 100000`
 - `max_total_tokens: 500000`
 - no-progress timeout and token classifiers
 - mandatory git worktree check before each run

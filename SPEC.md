@@ -678,6 +678,8 @@ not require recognizing or validating extension fields unless that extension is 
 - `agent.max_concurrent_agents`: integer, default `10`
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
+- `agent.startup_progress_timeout_ms`: integer first-progress wall-clock budget, default `0`, `0` disables
+- `agent.startup_progress_max_tokens`: integer first-progress token budget, default `0`, `0` disables
 - `agent.max_total_tokens`: integer hard per-run token budget, default `500000`, `0` disables
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
@@ -1230,6 +1232,11 @@ Note:
 - `agent.max_total_tokens` is a hard per-run budget. If no workspace progress is visible, the
   orchestrator SHOULD stop at a pre-exhaustion threshold before the full hard budget is consumed,
   preserve the worktree, and classify the block as `token_budget_exceeded`.
+- `agent.startup_progress_timeout_ms` and `agent.startup_progress_max_tokens` bound initial
+  context acquisition. Useful orientation counts as progress only when the runner records a compact
+  context summary, file shortlist, validation path, plan, command, file change, diff, or blocker.
+  If the gate trips first, the orchestrator MUST preserve recent sanitized event summaries and
+  classify the block as `startup_no_progress`.
 
 ## 11. Issue Tracker Integration Contract (Linear-Compatible)
 

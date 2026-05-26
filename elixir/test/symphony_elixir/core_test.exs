@@ -125,6 +125,8 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(agent, "no_progress_max_tokens") == 120_000
     assert Map.get(agent, "startup_token_window_ms") == 60_000
     assert Map.get(agent, "startup_max_total_tokens") == 120_000
+    assert Map.get(agent, "startup_progress_timeout_ms") == 60_000
+    assert Map.get(agent, "startup_progress_max_tokens") == 100_000
     assert Map.get(agent, "max_total_tokens") == 500_000
     assert Map.get(agent, "prompt_mode") == "compact"
     assert Map.get(codex, "command") =~ "--dangerously-bypass-approvals-and-sandbox"

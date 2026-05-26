@@ -82,6 +82,7 @@ defmodule SymphonyElixir.PromptBuilder do
       "- Keep startup context lean: use targeted `rg` and line-range reads; do not print full guidance files, package manifests, generated files, complete workflow docs, or full diffs unless required.",
       "- Never ingest full log files, dependency trees, generated assets, build output, cache directories, or coverage artifacts. If a validation log is needed, read only the failing lines.",
       "- If this worktree already has relevant edits, validate and repair those edits first instead of restarting broad discovery.",
+      "- Context acquisition is required but bounded. After your initial targeted orientation, emit exactly one compact `SYMPHONY_ORIENTATION_CHECKPOINT` with likely files, validation commands, assumptions, and the next action before broad reading.",
       "- Within three startup commands, either edit a target file or run targeted validation unless you are blocked by missing credentials or tools.",
       "- Keep shell commands single-purpose. Avoid chained reads with `&&`, semicolons, or separator `echo` blocks because their combined output can hide runaway context.",
       "- For small tasks, inspect or edit repository files within 45 seconds. Do not spend the opening turn maintaining Linear workpads.",

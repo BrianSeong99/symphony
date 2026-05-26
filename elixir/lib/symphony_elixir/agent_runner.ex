@@ -37,6 +37,7 @@ defmodule SymphonyElixir.AgentRunner do
           with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host),
                {:ok, context_packet} <- ContextIngestion.prepare(workspace, issue) do
             opts = maybe_put_context_packet(opts, context_packet)
+            send_context_checkpoint(codex_update_recipient, issue, context_packet)
             run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host)
           end
         after
@@ -64,6 +65,21 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp send_codex_update(_recipient, _issue, _message), do: :ok
+
+  defp send_context_checkpoint(_recipient, _issue, nil), do: :ok
+
+  defp send_context_checkpoint(recipient, %Issue{} = issue, context_packet) when is_pid(recipient) and is_map(context_packet) do
+    send_codex_update(recipient, issue, %{
+      event: :context_checkpoint,
+      timestamp: DateTime.utc_now(),
+      payload: %{
+        method: "context/checkpoint",
+        summary: ContextIngestion.summary(context_packet)
+      }
+    })
+  end
+
+  defp send_context_checkpoint(_recipient, _issue, _context_packet), do: :ok
 
   defp send_worker_runtime_info(recipient, %Issue{id: issue_id}, worker_host, workspace)
        when is_binary(issue_id) and is_pid(recipient) and is_binary(workspace) do

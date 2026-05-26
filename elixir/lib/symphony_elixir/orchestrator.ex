@@ -28,6 +28,8 @@ defmodule SymphonyElixir.Orchestrator do
   @committed_progress_timeout_multiplier 4
   @committed_progress_token_multiplier 5
   @hard_token_budget_preemptive_stop_percent 95
+  @recent_codex_event_limit 8
+  @codex_event_preview_bytes 240
   @normal_completion_blocking_classifications MapSet.new([
                                                 :auth_failure,
                                                 :budget_exhausted,
@@ -38,6 +40,7 @@ defmodule SymphonyElixir.Orchestrator do
                                                 :no_progress_budget_exceeded,
                                                 :permission_denied_loop,
                                                 :requirements_mismatch,
+                                                :startup_no_progress,
                                                 :validation_failure_repeat
                                               ])
   # Slightly above the dashboard render interval so "checking now…" can render.
@@ -291,6 +294,7 @@ defmodule SymphonyElixir.Orchestrator do
         state =
           state
           |> maybe_block_startup_token_budget_issue(issue_id, updated_running_entry)
+          |> maybe_block_startup_no_progress_issue(issue_id, updated_running_entry)
           |> maybe_block_hard_token_budget_issue_if_running(issue_id, updated_running_entry)
 
         notify_dashboard()
@@ -1062,6 +1066,80 @@ defmodule SymphonyElixir.Orchestrator do
     |> stop_and_block_issue(issue_id, running_entry, reason)
   end
 
+  defp maybe_block_startup_no_progress_issue(%State{} = state, issue_id, running_entry) do
+    settings = Config.settings!().agent
+
+    case startup_no_progress_trigger(state, issue_id, running_entry, settings) do
+      nil ->
+        state
+
+      {trigger, elapsed_ms, total_tokens} ->
+        block_startup_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, trigger)
+    end
+  end
+
+  defp startup_no_progress_trigger(%State{} = state, issue_id, running_entry, settings) do
+    if startup_progress_gate_active?(state, issue_id, running_entry, settings) do
+      startup_no_progress_budget_trigger(running_entry, settings)
+    end
+  end
+
+  defp startup_progress_gate_active?(%State{} = state, issue_id, running_entry, settings) do
+    gate_configured? = settings.startup_progress_timeout_ms > 0 or settings.startup_progress_max_tokens > 0
+
+    Map.has_key?(state.running, issue_id) and
+      gate_configured? and
+      Map.get(running_entry, :startup_progress_met) != true
+  end
+
+  defp startup_no_progress_budget_trigger(running_entry, settings) do
+    elapsed_ms = running_age_ms(running_entry, DateTime.utc_now())
+    total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+
+    startup_no_progress_time_trigger(settings.startup_progress_timeout_ms, elapsed_ms, total_tokens) ||
+      startup_no_progress_token_trigger(settings.startup_progress_max_tokens, elapsed_ms, total_tokens)
+  end
+
+  defp startup_no_progress_time_trigger(timeout_ms, elapsed_ms, total_tokens)
+       when timeout_ms > 0 and is_integer(elapsed_ms) and elapsed_ms > timeout_ms do
+    {:time, elapsed_ms, total_tokens}
+  end
+
+  defp startup_no_progress_time_trigger(_timeout_ms, _elapsed_ms, _total_tokens), do: nil
+
+  defp startup_no_progress_token_trigger(max_tokens, elapsed_ms, total_tokens)
+       when max_tokens > 0 and is_integer(total_tokens) and total_tokens > max_tokens do
+    {:tokens, elapsed_ms, total_tokens}
+  end
+
+  defp startup_no_progress_token_trigger(_max_tokens, _elapsed_ms, _total_tokens), do: nil
+
+  defp block_startup_no_progress_issue(state, issue_id, running_entry, elapsed_ms, total_tokens, trigger) do
+    identifier = Map.get(running_entry, :identifier, issue_id)
+    session_id = running_entry_session_id(running_entry)
+    classification = :startup_no_progress
+    recent_events = Map.get(running_entry, :recent_codex_events, [])
+    recent_summary = recent_events_reason_fragment(recent_events)
+
+    reason =
+      "startup_no_progress trigger=#{trigger} elapsed_ms=#{elapsed_ms || "n/a"} " <>
+        "total_tokens=#{total_tokens || 0} recent_events=#{recent_summary}"
+
+    failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
+
+    Logger.warning("Issue blocked by startup no-progress gate: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} #{reason}")
+
+    running_entry =
+      running_entry
+      |> Map.put(:classification, classification)
+      |> Map.put(:failure_fingerprint, failure_fingerprint)
+      |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
+
+    state
+    |> record_session_completion_totals(running_entry)
+    |> stop_and_block_issue(issue_id, running_entry, reason)
+  end
+
   defp hard_token_budget_preemptive_stop_tokens(max_tokens) when is_integer(max_tokens) and max_tokens > 0 do
     floor(max_tokens * @hard_token_budget_preemptive_stop_percent / 100)
   end
@@ -1563,6 +1641,11 @@ defmodule SymphonyElixir.Orchestrator do
       last_codex_message: Map.get(running_entry, :last_codex_message),
       last_codex_event: Map.get(running_entry, :last_codex_event),
       last_codex_timestamp: Map.get(running_entry, :last_codex_timestamp),
+      recent_codex_events: Map.get(running_entry, :recent_codex_events, []),
+      startup_progress_met: Map.get(running_entry, :startup_progress_met, false),
+      startup_progress_kind: Map.get(running_entry, :startup_progress_kind),
+      startup_progress_summary: Map.get(running_entry, :startup_progress_summary),
+      startup_progress_at: Map.get(running_entry, :startup_progress_at),
       token_budget: token_budget_snapshot(running_entry, DateTime.utc_now()),
       classification: classification,
       failure_fingerprint:
@@ -1789,6 +1872,11 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_message: nil,
           last_codex_timestamp: nil,
           last_codex_event: nil,
+          recent_codex_events: [],
+          startup_progress_met: false,
+          startup_progress_kind: nil,
+          startup_progress_summary: nil,
+          startup_progress_at: nil,
           codex_app_server_pid: nil,
           codex_input_tokens: 0,
           codex_cached_input_tokens: 0,
@@ -2587,6 +2675,11 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_timestamp: metadata.last_codex_timestamp,
           last_codex_message: metadata.last_codex_message,
           last_codex_event: metadata.last_codex_event,
+          recent_codex_events: Map.get(metadata, :recent_codex_events, []),
+          startup_progress_met: Map.get(metadata, :startup_progress_met, false),
+          startup_progress_kind: Map.get(metadata, :startup_progress_kind),
+          startup_progress_summary: Map.get(metadata, :startup_progress_summary),
+          startup_progress_at: Map.get(metadata, :startup_progress_at),
           classification: Map.get(metadata, :classification),
           failure_fingerprint: Map.get(metadata, :failure_fingerprint),
           suggested_action: Map.get(metadata, :suggested_action),
@@ -2634,6 +2727,11 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_timestamp: Map.get(metadata, :last_codex_timestamp),
           last_codex_message: Map.get(metadata, :last_codex_message),
           last_codex_event: Map.get(metadata, :last_codex_event),
+          recent_codex_events: Map.get(metadata, :recent_codex_events, []),
+          startup_progress_met: Map.get(metadata, :startup_progress_met, false),
+          startup_progress_kind: Map.get(metadata, :startup_progress_kind),
+          startup_progress_summary: Map.get(metadata, :startup_progress_summary),
+          startup_progress_at: Map.get(metadata, :startup_progress_at),
           branch: workspace_branch(Map.get(metadata, :workspace_path)),
           token_budget: Map.get(metadata, :token_budget)
         }
@@ -2781,11 +2879,14 @@ defmodule SymphonyElixir.Orchestrator do
     classification = RunnerObserver.classify_event(event, update[:payload] || update[:raw])
     existing_classification = Map.get(running_entry, :classification)
     effective_classification = classification || existing_classification
+    progress_milestone = codex_progress_milestone(update)
 
-    {
-      Map.merge(running_entry, %{
+    updated_entry =
+      running_entry
+      |> Map.merge(%{
         last_codex_timestamp: timestamp,
         last_codex_message: summarize_codex_update(update),
+        recent_codex_events: update_recent_codex_events(running_entry, update),
         session_id: session_id_for_update(running_entry.session_id, update),
         last_codex_event: event,
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
@@ -2802,10 +2903,222 @@ defmodule SymphonyElixir.Orchestrator do
         classification: effective_classification,
         failure_fingerprint: failure_fingerprint_for_update(running_entry, update, effective_classification),
         suggested_action: suggested_action_for_update(running_entry, classification, effective_classification)
-      }),
+      })
+      |> maybe_mark_startup_progress(progress_milestone, timestamp)
+
+    {
+      updated_entry,
       token_delta
     }
   end
+
+  defp maybe_mark_startup_progress(running_entry, nil, _timestamp), do: running_entry
+
+  defp maybe_mark_startup_progress(running_entry, {kind, summary}, timestamp) do
+    running_entry
+    |> Map.put(:startup_progress_met, true)
+    |> Map.put(:startup_progress_kind, kind)
+    |> Map.put(:startup_progress_summary, summary)
+    |> Map.put(:startup_progress_at, timestamp)
+    |> Map.put(:workspace_progress_changed_at, timestamp)
+    |> Map.put(:workspace_progress_tokens, no_progress_token_total(running_entry))
+  end
+
+  defp codex_progress_milestone(%{event: :context_checkpoint, payload: %{summary: summary}}),
+    do: {:context_checkpoint, compact_progress_summary(summary)}
+
+  defp codex_progress_milestone(%{event: :context_checkpoint, payload: %{"summary" => summary}}),
+    do: {:context_checkpoint, compact_progress_summary(summary)}
+
+  defp codex_progress_milestone(update) do
+    update
+    |> codex_update_method()
+    |> codex_progress_milestone(codex_update_item_type(update), update)
+  end
+
+  defp codex_progress_milestone("turn/plan/updated", _item_type, update),
+    do: {:plan_updated, codex_event_preview(update) || "plan updated"}
+
+  defp codex_progress_milestone("item/plan/delta", _item_type, update),
+    do: {:plan_delta, codex_event_preview(update) || "plan streaming"}
+
+  defp codex_progress_milestone("turn/diff/updated", _item_type, update) do
+    if present_text?(codex_update_diff(update)), do: {:diff_updated, "turn diff updated"}
+  end
+
+  defp codex_progress_milestone("item/started", "commandExecution", update),
+    do: {:command_execution_started, codex_event_preview(update) || "commandExecution started"}
+
+  defp codex_progress_milestone("item/started", "fileChange", update),
+    do: {:file_change_started, codex_event_preview(update) || "fileChange started"}
+
+  defp codex_progress_milestone("item/completed", "fileChange", update),
+    do: {:file_change_completed, codex_event_preview(update) || "file change completed"}
+
+  defp codex_progress_milestone("item/commandExecution/outputDelta", _item_type, update),
+    do: {:command_output, codex_event_preview(update) || "item/commandExecution/outputDelta"}
+
+  defp codex_progress_milestone("item/fileChange/outputDelta", _item_type, update),
+    do: {:file_change_output, codex_event_preview(update) || "item/fileChange/outputDelta"}
+
+  defp codex_progress_milestone("item/agentMessage/delta", _item_type, update) do
+    preview = codex_event_preview(update)
+    if orientation_checkpoint?(preview), do: {:orientation_checkpoint, preview}
+  end
+
+  defp codex_progress_milestone(_method, _item_type, _update), do: nil
+
+  defp update_recent_codex_events(running_entry, update) do
+    recent =
+      running_entry
+      |> Map.get(:recent_codex_events, [])
+      |> List.wrap()
+
+    [summarize_recent_codex_event(update) | recent]
+    |> Enum.take(@recent_codex_event_limit)
+  end
+
+  defp summarize_recent_codex_event(update) do
+    payload = codex_update_payload(update)
+    text = codex_event_preview(update)
+
+    %{
+      event: update[:event],
+      method: codex_update_method(update),
+      item_type: codex_update_item_type(update),
+      text: if(present_text?(text), do: text, else: "empty"),
+      timestamp: update[:timestamp],
+      usage_total: payload_total_tokens(payload)
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp compact_progress_summary(summary) when is_map(summary) do
+    summary
+    |> Map.take([
+      :context_packet_id,
+      :provider,
+      :provider_status,
+      :cache_status,
+      :likely_relevant_files,
+      :validation_files,
+      :guidance_files,
+      :next_action,
+      "context_packet_id",
+      "provider",
+      "provider_status",
+      "cache_status",
+      "likely_relevant_files",
+      "validation_files",
+      "guidance_files",
+      "next_action"
+    ])
+  end
+
+  defp compact_progress_summary(summary) when is_binary(summary), do: truncate_event_text(summary)
+  defp compact_progress_summary(summary), do: inspect(summary, limit: 10, printable_limit: @codex_event_preview_bytes)
+
+  defp recent_events_reason_fragment([]), do: "none"
+
+  defp recent_events_reason_fragment(events) when is_list(events) do
+    events
+    |> Enum.take(5)
+    |> Enum.map_join(" | ", fn event ->
+      method = Map.get(event, :method) || "unknown"
+      item_type = Map.get(event, :item_type)
+      text = Map.get(event, :text) || "empty"
+      usage = Map.get(event, :usage_total)
+
+      [method, item_type, "text=#{text}", usage && "total=#{usage}"]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join(" ")
+    end)
+    |> truncate_event_text()
+  end
+
+  defp codex_update_payload(update) when is_map(update) do
+    case update[:payload] || Map.get(update, "payload") do
+      payload when is_map(payload) -> payload
+      _payload -> %{}
+    end
+  end
+
+  defp codex_update_method(update) do
+    payload = codex_update_payload(update)
+    Map.get(payload, :method) || Map.get(payload, "method")
+  end
+
+  defp codex_update_item_type(update) do
+    payload = codex_update_payload(update)
+
+    map_at_path(payload, ["params", "item", "type"]) ||
+      map_at_path(payload, [:params, :item, :type]) ||
+      map_at_path(payload, ["params", "type"]) ||
+      map_at_path(payload, [:params, :type])
+  end
+
+  defp codex_update_diff(update) do
+    payload = codex_update_payload(update)
+    map_at_path(payload, ["params", "diff"]) || map_at_path(payload, [:params, :diff])
+  end
+
+  defp codex_event_preview(update) do
+    payload = codex_update_payload(update)
+
+    [
+      map_at_path(payload, ["params", "delta"]),
+      map_at_path(payload, [:params, :delta]),
+      map_at_path(payload, ["params", "text"]),
+      map_at_path(payload, [:params, :text]),
+      map_at_path(payload, ["params", "item", "text"]),
+      map_at_path(payload, [:params, :item, :text]),
+      map_at_path(payload, ["params", "item", "content"]),
+      map_at_path(payload, [:params, :item, :content]),
+      map_at_path(payload, ["params", "command"]),
+      map_at_path(payload, [:params, :command]),
+      map_at_path(payload, ["params", "parsedCmd"]),
+      map_at_path(payload, [:params, :parsedCmd])
+    ]
+    |> Enum.find_value(&preview_value/1)
+  end
+
+  defp preview_value(value) when is_binary(value) do
+    value = String.trim(value)
+    if value == "", do: nil, else: truncate_event_text(value)
+  end
+
+  defp preview_value(value) when is_list(value) and value != [] do
+    value
+    |> Enum.map_join(" ", &to_string/1)
+    |> truncate_event_text()
+  end
+
+  defp preview_value(value) when is_map(value), do: value |> inspect(limit: 6, printable_limit: @codex_event_preview_bytes) |> truncate_event_text()
+  defp preview_value(_value), do: nil
+
+  defp orientation_checkpoint?(text) when is_binary(text), do: String.contains?(text, "SYMPHONY_ORIENTATION_CHECKPOINT")
+  defp orientation_checkpoint?(_text), do: false
+
+  defp present_text?(text) when is_binary(text), do: String.trim(text) != ""
+  defp present_text?(_text), do: false
+
+  defp payload_total_tokens(payload) when is_map(payload) do
+    payload
+    |> turn_completed_usage_from_payload()
+    |> case do
+      usage when is_map(usage) -> get_token_usage(usage, :total)
+      _ -> nil
+    end
+  end
+
+  defp payload_total_tokens(_payload), do: nil
+
+  defp truncate_event_text(text) when is_binary(text) and byte_size(text) > @codex_event_preview_bytes do
+    binary_part(text, 0, @codex_event_preview_bytes) <> "..."
+  end
+
+  defp truncate_event_text(text), do: text
 
   defp suggested_action_for_update(_running_entry, classification, _effective_classification)
        when not is_nil(classification) do
@@ -2832,22 +3145,38 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_log_codex_progress(issue_id, running_entry, %{event: event} = update) do
-    case RunnerObserver.classify_event(event, update[:payload] || update[:raw]) do
-      nil ->
-        :ok
-
-      classification ->
-        log_run_event(issue_id, :"runner.classified_failure", %{
+    case codex_progress_milestone(update) do
+      {kind, summary} ->
+        log_run_event(issue_id, :"build.progress", %{
           identifier: running_entry.identifier,
           role: :builder,
           session_id: Map.get(running_entry, :session_id),
           pid: Map.get(running_entry, :codex_app_server_pid),
           worktree: Map.get(running_entry, :workspace_path),
           last_event: event,
-          classification: classification,
-          failure_fingerprint: RunnerObserver.failure_fingerprint(update, classification),
-          suggested_action: RunnerObserver.suggested_action(classification)
+          milestone: kind,
+          summary: summary,
+          last_event_at: Map.get(update, :timestamp)
         })
+
+      nil ->
+        case RunnerObserver.classify_event(event, update[:payload] || update[:raw]) do
+          nil ->
+            :ok
+
+          classification ->
+            log_run_event(issue_id, :"runner.classified_failure", %{
+              identifier: running_entry.identifier,
+              role: :builder,
+              session_id: Map.get(running_entry, :session_id),
+              pid: Map.get(running_entry, :codex_app_server_pid),
+              worktree: Map.get(running_entry, :workspace_path),
+              last_event: event,
+              classification: classification,
+              failure_fingerprint: RunnerObserver.failure_fingerprint(update, classification),
+              suggested_action: RunnerObserver.suggested_action(classification)
+            })
+        end
     end
   end
 

@@ -1451,6 +1451,242 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute Process.alive?(worker_pid)
   end
 
+  test "orchestrator blocks startup with token burn but no visible progress milestone" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      startup_progress_timeout_ms: 60_000,
+      startup_progress_max_tokens: 10_000,
+      max_total_tokens: 500_000
+    )
+
+    issue_id = "issue-startup-no-progress"
+    orchestrator_name = Module.concat(__MODULE__, :StartupNoProgressOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-STARTUP-NO-PROGRESS",
+      issue: %Issue{id: issue_id, identifier: "LAB-STARTUP-NO-PROGRESS", state: "In Progress"},
+      workspace_path: nil,
+      session_id: "thread-startup-no-progress-turn-1",
+      recent_codex_events: [],
+      startup_progress_met: false,
+      codex_total_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      %{
+        event: :notification,
+        timestamp: DateTime.utc_now(),
+        payload: %{
+          method: "item/started",
+          params: %{item: %{type: "agentMessage", text: ""}}
+        }
+      }
+    })
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      %{
+        event: :notification,
+        timestamp: DateTime.utc_now(),
+        payload: %{
+          method: "turn/completed",
+          usage: %{total_tokens: 12_000, input_tokens: 11_500, output_tokens: 500}
+        }
+      }
+    })
+
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.running, issue_id)
+
+    assert %{
+             identifier: "LAB-STARTUP-NO-PROGRESS",
+             classification: :startup_no_progress,
+             error: error,
+             recent_codex_events: recent_events,
+             suggested_action: suggested_action
+           } = state.blocked[issue_id]
+
+    assert error =~ "startup_no_progress"
+    assert error =~ "recent_events="
+    assert Enum.any?(recent_events, &(&1.method == "item/started" and &1.item_type == "agentMessage" and &1.text == "empty"))
+    assert suggested_action =~ "compact orientation summary"
+
+    refute Process.alive?(worker_pid)
+  end
+
+  test "context checkpoint satisfies startup progress gate and preserves compact summary" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      startup_progress_timeout_ms: 60_000,
+      startup_progress_max_tokens: 10_000,
+      max_total_tokens: 500_000
+    )
+
+    issue_id = "issue-context-checkpoint-progress"
+    orchestrator_name = Module.concat(__MODULE__, :ContextCheckpointProgressOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-CONTEXT-CHECKPOINT",
+      issue: %Issue{id: issue_id, identifier: "LAB-CONTEXT-CHECKPOINT", state: "In Progress"},
+      workspace_path: nil,
+      session_id: "thread-context-checkpoint-turn-1",
+      recent_codex_events: [],
+      startup_progress_met: false,
+      codex_total_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    checkpoint_at = DateTime.utc_now()
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      %{
+        event: :context_checkpoint,
+        timestamp: checkpoint_at,
+        payload: %{
+          method: "context/checkpoint",
+          summary: %{
+            context_packet_id: "ctx-test",
+            likely_relevant_files: ["lib/example.ex"],
+            validation_files: ["mix.exs"],
+            next_action: "Inspect lib/example.ex, then run mix test."
+          }
+        }
+      }
+    })
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      %{
+        event: :notification,
+        timestamp: DateTime.utc_now(),
+        payload: %{
+          method: "turn/completed",
+          usage: %{total_tokens: 12_000, input_tokens: 11_500, output_tokens: 500}
+        }
+      }
+    })
+
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(worker_pid)
+    refute Map.has_key?(state.blocked, issue_id)
+
+    assert %{
+             startup_progress_met: true,
+             startup_progress_kind: :context_checkpoint,
+             startup_progress_at: ^checkpoint_at,
+             startup_progress_summary: summary
+           } = state.running[issue_id]
+
+    assert summary.context_packet_id == "ctx-test"
+    assert summary.likely_relevant_files == ["lib/example.ex"]
+  end
+
+  test "blocked issues are not dispatchable until the block is cleared" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
+
+    orchestrator_name = Module.concat(__MODULE__, :BlockedDispatchOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    issue = %Issue{
+      id: "issue-blocked-dispatch",
+      identifier: "GH-106",
+      title: "Startup progress gate",
+      state: "Todo",
+      assigned_to_worker: true
+    }
+
+    state = :sys.get_state(pid)
+
+    blocked_state =
+      state
+      |> Map.put(:blocked, %{issue.id => %{issue_id: issue.id, identifier: issue.identifier}})
+      |> Map.put(:claimed, MapSet.put(state.claimed, issue.id))
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, blocked_state)
+
+    cleared_state =
+      blocked_state
+      |> Map.put(:blocked, %{})
+      |> Map.put(:claimed, MapSet.delete(blocked_state.claimed, issue.id))
+
+    assert Orchestrator.should_dispatch_issue_for_test(issue, cleared_state)
+  end
+
   test "orchestrator no-progress token budget ignores cached context tokens" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
