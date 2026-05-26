@@ -107,6 +107,20 @@ patterns:
       can_weaken_hard_gates: false
       human_approval_required: false
 
+  - key: bounded-codebase-context-packet
+    summary: "Use cached codebase graphs and compact context packets to avoid repeated broad repository rediscovery."
+    origin_sources:
+      - graphify-codebase-context
+      - cursor-secure-indexing
+    enforces:
+      - "context packets record provider, cache status, graph hash, base commit, and token estimate"
+      - "context ingestion excludes dependency, build, cache, generated, and log paths by default"
+      - "provider failure falls back to internal context unless the workflow marks context as required"
+    safety_policy:
+      can_auto_apply: true
+      can_weaken_hard_gates: false
+      human_approval_required: false
+
   - key: loop-breaker
     summary: "Stop repeated failed attempts and require a spec or environment decision."
     origin_sources:

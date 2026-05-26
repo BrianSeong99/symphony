@@ -3,7 +3,7 @@ defmodule SymphonyElixir.PromptBuilder do
   Builds agent prompts from Linear issue data.
   """
 
-  alias SymphonyElixir.{Config, Workflow}
+  alias SymphonyElixir.{Config, ContextIngestion, Workflow}
 
   @render_opts [strict_variables: true, strict_filters: true]
 
@@ -30,6 +30,7 @@ defmodule SymphonyElixir.PromptBuilder do
       @render_opts
     )
     |> IO.iodata_to_binary()
+    |> append_context_packet(Keyword.get(opts, :context_packet))
     |> append_context_hygiene_rules()
   end
 
@@ -92,6 +93,8 @@ defmodule SymphonyElixir.PromptBuilder do
       "- Optional MCP tools such as Notion are not required and missing optional tools are not blockers.",
       "- If requirements are wrong or validation is misaligned, record the required issue update through Linear, then continue in the same session.",
       "",
+      compact_context_packet(Keyword.get(opts, :context_packet)),
+      "",
       "Deliverable:",
       "- Implement the issue, run the stated validation, commit cleanly, push, open a PR, and self-merge when validation passes and repo policy allows it.",
       "- Final response should contain completed actions and blockers only."
@@ -102,6 +105,9 @@ defmodule SymphonyElixir.PromptBuilder do
 
   defp compact_attempt(nil), do: nil
   defp compact_attempt(attempt), do: "- Retry attempt: #{attempt}"
+
+  defp compact_context_packet(nil), do: nil
+  defp compact_context_packet(context_packet), do: ContextIngestion.packet_text(context_packet)
 
   defp prompt_template!({:ok, %{prompt_template: prompt}}), do: default_prompt(prompt)
 
@@ -142,6 +148,12 @@ defmodule SymphonyElixir.PromptBuilder do
 
   defp append_context_hygiene_rules(prompt) do
     prompt <> "\n\n" <> context_hygiene_section()
+  end
+
+  defp append_context_packet(prompt, nil), do: prompt
+
+  defp append_context_packet(prompt, context_packet) do
+    prompt <> "\n\n" <> ContextIngestion.packet_text(context_packet)
   end
 
   defp context_hygiene_section do

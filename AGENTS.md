@@ -38,6 +38,7 @@ When another agent moves work into Symphony, it should watch the GitHub issue's
 marked Symphony run-log comment for:
 
 - worktree path and branch
+- context packet id, cache hit/miss, and provider fallback reason
 - pickup, PR-open, and merge timestamps
 - retry count
 - failure classifier

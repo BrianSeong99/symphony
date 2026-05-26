@@ -65,6 +65,36 @@ what the task needs for good work, while classifying wasteful patterns such as
 full log ingestion, repeated broad context reads, no-progress loops, and
 validation retries that do not change the plan.
 
+## Codebase Context Pilot
+
+Homelab is the first repo with bounded codebase context ingestion enabled. The
+workflow uses a Graphify provider when available and falls back to Symphony's
+internal file map when Graphify is missing or fails. This is intentionally
+Homelab-only for the first week.
+
+The context packet is not a replacement for repo guidance. It is a compact,
+versioned startup hint that should reduce repeated repo rediscovery:
+
+- guidance inventory: `AGENTS.md`, workflow files, PR templates, validation
+  files
+- service/runtime hints: compose files, health endpoints, Homelab registration
+  paths
+- likely relevant files for the issue
+- Graphify graph hash/query summary when available
+- fallback reason when Symphony used the internal map
+
+Every picked-up issue should log:
+
+- `context_ingestion.started`
+- `context_ingestion.cache_hit` or `context_ingestion.cache_miss`
+- `context_ingestion.completed`
+- `context_ingestion.failed` when the provider falls back
+- `context_packet.attached`
+
+Promotion gate: enable context ingestion for more repos only if it reduces
+startup context burn without hiding repo guidance, leaking private data, or
+causing stale-context mistakes.
+
 ## Starting A Runner
 
 Point the runner at one workflow file and enable the runner process:
@@ -95,6 +125,10 @@ During this week trial, inspect the run-log comments for:
 
 - time from pickup to PR open
 - time from PR open to merge
+- context cache hit rate
+- context ingestion duration
+- context packet token estimate
+- time to first implementation diff
 - startup token usage
 - total token usage
 - retry count

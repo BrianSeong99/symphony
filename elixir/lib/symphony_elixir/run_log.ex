@@ -24,6 +24,12 @@ defmodule SymphonyElixir.RunLog do
                     :"retry.scheduled",
                     :"retry.blocked",
                     :"runner.classified_failure",
+                    :"context_ingestion.started",
+                    :"context_ingestion.cache_hit",
+                    :"context_ingestion.cache_miss",
+                    :"context_ingestion.completed",
+                    :"context_ingestion.failed",
+                    :"context_packet.attached",
                     :"merge.ready",
                     :"merge.done"
                   ])

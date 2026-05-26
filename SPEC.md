@@ -401,7 +401,53 @@ Fields:
   - Setup hooks SHOULD avoid dependency installs until the planner knows they are needed for the
     issue's validation path.
 
-#### 5.3.4 `hooks` (object)
+#### 5.3.4 `context_ingestion` (object)
+
+Fields:
+
+- `enabled` (boolean)
+  - Default: `false`
+  - When true, the agent runner SHOULD build a bounded codebase context packet after workspace
+    preparation and before launching the coding agent.
+- `provider` (string)
+  - Supported values: `internal`, `graphify`
+  - `internal` builds a compact file/guidance/validation map without external tooling.
+  - `graphify` uses a local Graphify CLI when available and falls back according to
+    `required_for_runner`.
+- `command` (string)
+  - Default: `uvx --from graphifyy graphify`
+  - Used when `provider=graphify`.
+- `cache_root` (path string or `$VAR`, OPTIONAL)
+  - Default: `<workspace.root>/.symphony_context`
+  - Stores compact context packets outside individual issue worktrees.
+- `refresh_policy` (string)
+  - Supported values: `on_base_commit_change`, `always`, `manual`
+  - Default: `on_base_commit_change`
+- `max_ingestion_seconds` (positive integer)
+  - Default: `180`
+- `max_context_packet_tokens` (positive integer)
+  - Default: `12000`
+  - The prompt injection SHOULD be trimmed to this approximate budget.
+- `include` / `exclude` (list of strings)
+  - Optional bounded path globs for context packet construction.
+  - Exclusions SHOULD include dependency/build/cache/log directories.
+- `required_for_runner` (boolean)
+  - Default: `false`
+  - If false, provider failure is logged and the runner continues with internal fallback context.
+
+Run-log events:
+
+- `context_ingestion.started`
+- `context_ingestion.cache_hit`
+- `context_ingestion.cache_miss`
+- `context_ingestion.completed`
+- `context_ingestion.failed`
+- `context_packet.attached`
+
+The context packet MUST NOT include secrets, full logs, dependency trees, or large file contents.
+It is a startup hint, not a replacement for local repository guidance.
+
+#### 5.3.5 `hooks` (object)
 
 Fields:
 
@@ -1149,10 +1195,12 @@ The `Agent Runner` wraps workspace + prompt + app-server client.
 Behavior:
 
 1. Create/reuse workspace for issue.
-2. Build prompt from workflow template.
-3. Start app-server session.
-4. Forward app-server events to orchestrator.
-5. On any error, fail the worker attempt (the orchestrator will retry).
+2. Run configured workspace preflight hooks.
+3. Build or attach a bounded codebase context packet when `context_ingestion.enabled=true`.
+4. Build prompt from workflow template and context packet.
+5. Start app-server session.
+6. Forward app-server events to orchestrator.
+7. On any error, fail the worker attempt (the orchestrator will retry).
 
 Note:
 
