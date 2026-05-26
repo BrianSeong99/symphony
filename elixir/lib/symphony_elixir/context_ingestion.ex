@@ -73,6 +73,41 @@ defmodule SymphonyElixir.ContextIngestion do
   end
 
   @doc false
+  @spec summary(map() | nil) :: map()
+  def summary(nil) do
+    %{
+      context_packet_id: nil,
+      likely_relevant_files: [],
+      validation_files: [],
+      guidance_files: [],
+      assumptions: ["Context ingestion is disabled for this lane."],
+      next_action: "Use targeted repository commands to identify the smallest relevant edit or validation path."
+    }
+  end
+
+  def summary(packet) when is_map(packet) do
+    %{
+      context_packet_id: packet[:id],
+      provider: packet[:provider],
+      provider_status: packet[:provider_status],
+      cache_status: packet[:cache_status],
+      base_commit: packet[:base_commit],
+      graph_hash: packet[:graph_hash],
+      included_path_count: packet[:included_path_count],
+      context_packet_tokens: packet[:token_estimate],
+      likely_relevant_files: packet[:likely_relevant_files] |> List.wrap() |> Enum.take(10),
+      validation_files: packet[:validation_files] |> List.wrap() |> Enum.take(10),
+      guidance_files: packet[:guidance_files] |> List.wrap() |> Enum.take(10),
+      service_files: packet[:service_files] |> List.wrap() |> Enum.take(10),
+      assumptions: [
+        "Use targeted line-range reads for listed files before broad repository search.",
+        "Do not ingest logs, generated assets, dependency trees, caches, coverage, or build output."
+      ],
+      next_action: next_action(packet)
+    }
+  end
+
+  @doc false
   @spec cache_key_for_test(Path.t(), map(), map()) :: String.t()
   def cache_key_for_test(workspace, issue, settings), do: cache_key(workspace, issue, settings)
 
@@ -529,6 +564,8 @@ defmodule SymphonyElixir.ContextIngestion do
   defp provider_summary(_packet), do: nil
 
   defp log_attrs(packet, started_at) do
+    summary = summary(packet)
+
     %{
       context_packet_id: packet[:id],
       provider: packet[:provider],
@@ -538,9 +575,26 @@ defmodule SymphonyElixir.ContextIngestion do
       graph_hash: packet[:graph_hash],
       included_path_count: packet[:included_path_count],
       context_packet_tokens: packet[:token_estimate],
+      likely_relevant_files: summary.likely_relevant_files,
+      validation_files: summary.validation_files,
+      guidance_files: summary.guidance_files,
+      next_action: summary.next_action,
       ingestion_duration_ms: packet[:ingestion_duration_ms] || elapsed_ms(started_at),
       fallback_reason: packet[:fallback_reason]
     }
+  end
+
+  defp next_action(packet) do
+    cond do
+      List.wrap(packet[:likely_relevant_files]) != [] ->
+        "Inspect the likely relevant file shortlist with targeted line ranges, then edit or run focused validation."
+
+      List.wrap(packet[:validation_files]) != [] ->
+        "Inspect the validation files to choose the smallest relevant validation command before broad discovery."
+
+      true ->
+        "Run one targeted repository search from the issue terms, then update the issue with a blocker if no target path appears."
+    end
   end
 
   defp safe_log(issue, event, attrs) do

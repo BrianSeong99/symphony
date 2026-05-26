@@ -1396,6 +1396,21 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
+  defp humanize_codex_method("context/checkpoint", payload) do
+    summary = map_value(payload, ["summary", :summary]) || %{}
+    packet_id = map_value(summary, ["context_packet_id", :context_packet_id])
+    likely_files = summary |> map_value(["likely_relevant_files", :likely_relevant_files]) |> List.wrap() |> length()
+    validation_files = summary |> map_value(["validation_files", :validation_files]) |> List.wrap() |> length()
+
+    details =
+      []
+      |> append_if_present(packet_id)
+      |> append_if_present("likely #{likely_files}")
+      |> append_if_present("validation #{validation_files}")
+
+    "context checkpoint (#{Enum.join(details, ", ")})"
+  end
+
   defp humanize_codex_method("item/started", payload), do: humanize_item_lifecycle("started", payload)
   defp humanize_codex_method("item/completed", payload), do: humanize_item_lifecycle("completed", payload)
 

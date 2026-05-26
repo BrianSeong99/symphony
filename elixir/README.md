@@ -241,6 +241,11 @@ Notes:
   exceeds it, Symphony stops the agent, preserves the worktree, classifies the block as
   `token_budget_exceeded`, and writes evidence to the tracker issue. Set it to `0` only for
   intentional diagnostics.
+- `agent.startup_progress_timeout_ms` and `agent.startup_progress_max_tokens` bound the first
+  visible progress milestone. Context acquisition is allowed, but the runner must emit a compact
+  context checkpoint, plan, command, file change, diff, validation action, or blocker before this
+  gate is exceeded; otherwise the issue is blocked as `startup_no_progress` with recent event
+  evidence.
 - Runs with no branch/file progress stop at 95% of `agent.max_total_tokens`, before they can burn
   the entire hard budget. The issue is blocked with `token_budget_exceeded` evidence so the next
   attempt can shrink context or split scope.

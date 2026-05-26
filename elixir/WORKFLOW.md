@@ -78,6 +78,8 @@ agent:
   no_progress_max_tokens: 120000
   startup_token_window_ms: 60000
   startup_max_total_tokens: 120000
+  startup_progress_timeout_ms: 60000
+  startup_progress_max_tokens: 100000
   max_total_tokens: 500000
   prompt_mode: compact
 codex:
