@@ -13,7 +13,7 @@ workspace:
   root: ~/Develop/Labs/worktrees/symphony-omega-interface-github-test
   source_repo: ~/Develop/Chainless/omega-interface
   base_ref: origin/main
-  branch_prefix: brian/symphony
+  branch_prefix: brian/symphony-omega-interface
   context_exclude_patterns:
     - node_modules/
     - .next/

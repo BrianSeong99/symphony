@@ -13,7 +13,7 @@ workspace:
   root: ~/Develop/Labs/worktrees/symphony-omega-zone-github-test
   source_repo: ~/Develop/Chainless/omega-zone
   base_ref: origin/main
-  branch_prefix: brian/symphony
+  branch_prefix: brian/symphony-omega-zone
   context_exclude_patterns:
     - node_modules/
     - .next/
