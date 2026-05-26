@@ -80,6 +80,7 @@ defmodule SymphonyElixir.PromptBuilder do
       "- Do not use GitHub connectors, app connectors, or MCP app tools for branch, commit, push, PR, review, or merge operations. Use local `git` and `gh` CLI from the worktree instead.",
       "- Start with `git diff --stat` after the worktree check. If existing dirty files match the issue, inspect only the changed files and validation path.",
       "- Keep startup context lean: use targeted `rg` and line-range reads; do not print full guidance files, package manifests, generated files, complete workflow docs, or full diffs unless required.",
+      "- Never ingest full log files, dependency trees, generated assets, build output, cache directories, or coverage artifacts. If a validation log is needed, read only the failing lines.",
       "- If this worktree already has relevant edits, validate and repair those edits first instead of restarting broad discovery.",
       "- Within three startup commands, either edit a target file or run targeted validation unless you are blocked by missing credentials or tools.",
       "- Keep shell commands single-purpose. Avoid chained reads with `&&`, semicolons, or separator `echo` blocks because their combined output can hide runaway context.",
@@ -165,6 +166,7 @@ defmodule SymphonyElixir.PromptBuilder do
       "- Prefer targeted file reads and `rg` searches over broad directory listings.",
       "- Treat injected `AGENTS.md`/`CLAUDE.md` guidance as already loaded; do not print or re-read full guidance files.",
       "- Keep startup context lean: use `git diff --stat`, targeted `rg`, and line-range reads instead of printing full guidance files, package manifests, generated files, complete workflow docs, or full diffs.",
+      "- Never ingest full log files, dependency trees, generated assets, build output, cache directories, or coverage artifacts. If a validation log is needed, read only the failing lines.",
       "- If the worktree already has relevant edits, validate and repair those edits before broad rediscovery."
     ]
     |> Enum.join("\n")

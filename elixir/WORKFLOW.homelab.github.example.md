@@ -108,4 +108,6 @@ Avoid dependency, cache, build, coverage, and generated-artifact paths during ex
 
 Keep startup context lean. After the worktree check, run `git diff --stat`; if this worktree already has relevant edits, validate and repair those edits before broad rediscovery. Use targeted `rg` and line-range reads. Keep shell commands single-purpose; avoid chained reads with `&&`, semicolons, or separator `echo` blocks. Optional connectors and MCP tools are not required for Homelab GitHub issue work.
 
+Never ingest full log files, dependency trees, generated assets, build output, cache directories, or coverage artifacts. If validation output is needed, read only the failing lines. If the injected issue context and context packet are enough to identify the target files, edit those files before any broad repository rediscovery.
+
 Finish the issue end-to-end: implement, validate, commit, push, open a PR that closes the issue, and self-merge when checks pass and repository policy allows it.

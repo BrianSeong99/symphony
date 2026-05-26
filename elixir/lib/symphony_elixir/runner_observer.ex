@@ -37,6 +37,7 @@ defmodule SymphonyElixir.RunnerObserver do
      [
        "missing_tool",
        "missing required runner tool",
+       "missing required executable",
        "bash_not_found",
        "enoent",
        "executable not found",

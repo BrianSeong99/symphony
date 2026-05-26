@@ -182,6 +182,12 @@ pickup through `active_labels`, normalizes GitHub issues into Symphony issue
 records, writes a single marked run-log comment, and closes the GitHub issue
 when Symphony reaches a terminal state.
 
+For GitHub lanes, Symphony now checks the host-runtime contract before pickup:
+`gh auth`, `git`, `workspace.source_repo`, writable `workspace.root`, `codex`
+availability, Codex config home, and `codex app-server` command shape. Readiness
+failures block dispatch immediately and are exposed in `/api/v1/state`, the
+dashboard, and the terminal status view.
+
 For the Homelab and WPRC week trial, see
 [`../docs/github-runner-week-trial.md`](../docs/github-runner-week-trial.md).
 
@@ -235,6 +241,9 @@ Notes:
   exceeds it, Symphony stops the agent, preserves the worktree, classifies the block as
   `token_budget_exceeded`, and writes evidence to the tracker issue. Set it to `0` only for
   intentional diagnostics.
+- Runs with no branch/file progress stop at 95% of `agent.max_total_tokens`, before they can burn
+  the entire hard budget. The issue is blocked with `token_budget_exceeded` evidence so the next
+  attempt can shrink context or split scope.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` only for deterministic workspace setup such as remotes or fetches. Avoid
@@ -264,6 +273,9 @@ codex:
   reload error until the file is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
   `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+- `/api/v1/state` and `/api/v1/refresh` expose the latest tracker poll result, including tracker
+  kind/repository, candidate count, eligible count, dispatchable count, timestamp, and sanitized
+  error when polling fails.
 
 ## Web dashboard
 

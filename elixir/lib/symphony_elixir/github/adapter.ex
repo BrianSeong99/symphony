@@ -100,7 +100,8 @@ defmodule SymphonyElixir.GitHub.Adapter do
       {:ok, Enum.map(issues, &normalize_issue/1)}
     else
       {:ok, _other} -> {:error, :github_issue_list_unexpected_payload}
-      {:error, reason} -> {:error, reason}
+      {:error, {:github_cli_failed, status, output}} -> {:error, {:github_issue_list_failed, status, output}}
+      {:error, reason} -> {:error, {:github_issue_list_failed, reason}}
     end
   end
 

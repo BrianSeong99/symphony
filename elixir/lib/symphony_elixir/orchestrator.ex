@@ -13,6 +13,7 @@ defmodule SymphonyElixir.Orchestrator do
     RunLog,
     RunnerObserver,
     RunnerOwnership,
+    RunnerReadiness,
     StatusDashboard,
     Tracker,
     Workspace
@@ -26,6 +27,7 @@ defmodule SymphonyElixir.Orchestrator do
   @dirty_progress_token_multiplier 3
   @committed_progress_timeout_multiplier 4
   @committed_progress_token_multiplier 5
+  @hard_token_budget_preemptive_stop_percent 95
   @normal_completion_blocking_classifications MapSet.new([
                                                 :auth_failure,
                                                 :budget_exhausted,
@@ -67,6 +69,8 @@ defmodule SymphonyElixir.Orchestrator do
       codex_totals: nil,
       codex_rate_limits: nil,
       tracker_rate_limit: nil,
+      tracker_poll: nil,
+      runtime_readiness: nil,
       runner_ownership: nil
     ]
   end
@@ -400,57 +404,89 @@ defmodule SymphonyElixir.Orchestrator do
           |> reconcile_running_issues()
           |> reconcile_blocked_issues()
 
-        with :ok <- Config.validate!(),
-             {:ok, issues} <- Tracker.fetch_candidate_issues(),
-             true <- available_slots(state) > 0 do
-          choose_issues(issues, state)
-        else
-          {:error, {:linear_api_rate_limited, duration_ms}} ->
-            apply_tracker_rate_limit(state, duration_ms)
-
-          {:error, :missing_linear_api_token} ->
-            Logger.error("Linear API token missing in WORKFLOW.md")
+        case Config.validate!() do
+          :ok ->
             state
-
-          {:error, :missing_linear_project_slug} ->
-            Logger.error("Linear project slug missing in WORKFLOW.md")
-            state
-
-          {:error, :missing_tracker_kind} ->
-            Logger.error("Tracker kind missing in WORKFLOW.md")
-
-            state
-
-          {:error, {:unsupported_tracker_kind, kind}} ->
-            Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
-
-            state
-
-          {:error, {:invalid_workflow_config, message}} ->
-            Logger.error("Invalid WORKFLOW.md config: #{message}")
-            state
-
-          {:error, {:missing_workflow_file, path, reason}} ->
-            Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
-            state
-
-          {:error, :workflow_front_matter_not_a_map} ->
-            Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
-            state
-
-          {:error, {:workflow_parse_error, reason}} ->
-            Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
-            state
+            |> maybe_check_runner_readiness()
+            |> maybe_fetch_and_dispatch()
 
           {:error, reason} ->
-            Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
-            state
-
-          false ->
+            log_workflow_config_error(reason)
             state
         end
     end
   end
+
+  defp maybe_check_runner_readiness(%State{} = state) do
+    settings = Config.settings!()
+
+    case RunnerReadiness.check(settings) do
+      {:ok, readiness} ->
+        %{state | runtime_readiness: readiness}
+
+      {:error, readiness} ->
+        Logger.error("Runner runtime readiness failed: #{format_readiness_failures(readiness)}")
+
+        state
+        |> Map.put(:runtime_readiness, readiness)
+        |> record_tracker_poll_error({:runner_runtime_readiness_failed, format_readiness_failures(readiness)})
+    end
+  rescue
+    error ->
+      reason = {:runner_runtime_readiness_check_failed, Exception.message(error)}
+      Logger.error("Runner runtime readiness check failed: #{RunnerReadiness.sanitize_error(reason)}")
+      record_tracker_poll_error(state, reason)
+  end
+
+  defp maybe_fetch_and_dispatch(%State{runtime_readiness: %{status: :error}} = state), do: state
+
+  defp maybe_fetch_and_dispatch(%State{} = state) do
+    case Tracker.fetch_candidate_issues() do
+      {:ok, issues} ->
+        state = record_tracker_poll_success(state, issues)
+
+        if available_slots(state) > 0 do
+          choose_issues(issues, state)
+        else
+          state
+        end
+
+      {:error, {:linear_api_rate_limited, duration_ms}} ->
+        state
+        |> record_tracker_poll_error({:linear_api_rate_limited, duration_ms})
+        |> apply_tracker_rate_limit(duration_ms)
+
+      {:error, reason} ->
+        Logger.error("Failed to fetch tracker issues: #{RunnerReadiness.sanitize_error(reason)}")
+        record_tracker_poll_error(state, reason)
+    end
+  end
+
+  defp log_workflow_config_error(:missing_linear_api_token), do: Logger.error("Linear API token missing in WORKFLOW.md")
+  defp log_workflow_config_error(:missing_linear_project_slug), do: Logger.error("Linear project slug missing in WORKFLOW.md")
+  defp log_workflow_config_error(:missing_tracker_kind), do: Logger.error("Tracker kind missing in WORKFLOW.md")
+
+  defp log_workflow_config_error({:unsupported_tracker_kind, kind}) do
+    Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
+  end
+
+  defp log_workflow_config_error({:invalid_workflow_config, message}) do
+    Logger.error("Invalid WORKFLOW.md config: #{message}")
+  end
+
+  defp log_workflow_config_error({:missing_workflow_file, path, reason}) do
+    Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
+  end
+
+  defp log_workflow_config_error(:workflow_front_matter_not_a_map) do
+    Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
+  end
+
+  defp log_workflow_config_error({:workflow_parse_error, reason}) do
+    Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
+  end
+
+  defp log_workflow_config_error(reason), do: Logger.error("Invalid WORKFLOW.md config: #{inspect(reason)}")
 
   defp tracker_rate_limited?(%State{tracker_rate_limit: %{until_ms: until_ms}})
        when is_integer(until_ms) do
@@ -491,6 +527,86 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp apply_tracker_rate_limit(%State{} = state, _duration_ms), do: state
+
+  defp record_tracker_poll_success(%State{} = state, issues) when is_list(issues) do
+    active_states = active_state_set()
+    terminal_states = terminal_state_set()
+
+    tracker_poll = %{
+      status: :ok,
+      tracker: tracker_descriptor(),
+      candidate_count: length(issues),
+      eligible_count: Enum.count(issues, &eligible_issue_for_poll?(&1, active_states, terminal_states)),
+      dispatchable_count: Enum.count(issues, &should_dispatch_issue?(&1, state, active_states, terminal_states)),
+      checked_at: DateTime.utc_now()
+    }
+
+    %{state | tracker_poll: tracker_poll}
+  end
+
+  defp record_tracker_poll_error(%State{} = state, reason) do
+    tracker_poll = %{
+      status: :error,
+      tracker: tracker_descriptor(),
+      candidate_count: nil,
+      eligible_count: nil,
+      dispatchable_count: nil,
+      checked_at: DateTime.utc_now(),
+      classification: RunnerObserver.classify_failure(reason),
+      error: tracker_poll_error_message(reason)
+    }
+
+    %{state | tracker_poll: tracker_poll}
+  end
+
+  defp eligible_issue_for_poll?(%Issue{} = issue, active_states, terminal_states) do
+    active_issue_state?(issue.state, active_states) and not terminal_issue_state?(issue.state, terminal_states)
+  end
+
+  defp eligible_issue_for_poll?(_issue, _active_states, _terminal_states), do: false
+
+  defp tracker_poll_error_message({:github_issue_list_failed, status, output}) do
+    "GitHub issue list failed status=#{status}: #{RunnerReadiness.sanitize_error(output)}"
+  end
+
+  defp tracker_poll_error_message({:github_issue_list_failed, reason}) do
+    "GitHub issue list failed: #{RunnerReadiness.sanitize_error(reason)}"
+  end
+
+  defp tracker_poll_error_message({:linear_api_rate_limited, duration_ms}) do
+    "Linear API rate limited for #{duration_ms}ms"
+  end
+
+  defp tracker_poll_error_message({:runner_runtime_readiness_failed, message}) do
+    "Runner runtime readiness failed: #{message}"
+  end
+
+  defp tracker_poll_error_message(reason), do: RunnerReadiness.sanitize_error(reason)
+
+  defp tracker_descriptor do
+    settings = Config.settings!()
+
+    %{
+      kind: settings.tracker.kind,
+      repository: settings.tracker.repository,
+      project_slug: settings.tracker.project_slug
+    }
+  rescue
+    error ->
+      %{kind: "unknown", error: RunnerReadiness.sanitize_error(error)}
+  end
+
+  defp format_readiness_failures(%{checks: checks}) when is_list(checks) do
+    checks
+    |> Enum.filter(&(&1.status == :error))
+    |> Enum.map_join("; ", fn check -> "#{check.name}=#{check.message}" end)
+    |> case do
+      "" -> "unknown readiness failure"
+      message -> message
+    end
+  end
+
+  defp format_readiness_failures(_readiness), do: "unknown readiness failure"
 
   defp reconcile_running_issues(%State{} = state) do
     state =
@@ -869,11 +985,15 @@ defmodule SymphonyElixir.Orchestrator do
       not is_integer(total_tokens) ->
         state
 
-      total_tokens <= max_tokens ->
-        state
+      total_tokens > max_tokens ->
+        block_hard_token_budget_issue(state, issue_id, running_entry, max_tokens, total_tokens, :exceeded)
+
+      total_tokens >= hard_token_budget_preemptive_stop_tokens(max_tokens) and
+          not workspace_has_branch_progress?(running_entry) ->
+        block_hard_token_budget_issue(state, issue_id, running_entry, max_tokens, total_tokens, :preemptive)
 
       true ->
-        block_hard_token_budget_issue(state, issue_id, running_entry, max_tokens, total_tokens)
+        state
     end
   end
 
@@ -942,12 +1062,32 @@ defmodule SymphonyElixir.Orchestrator do
     |> stop_and_block_issue(issue_id, running_entry, reason)
   end
 
-  defp block_hard_token_budget_issue(state, issue_id, running_entry, max_tokens, total_tokens) do
+  defp hard_token_budget_preemptive_stop_tokens(max_tokens) when is_integer(max_tokens) and max_tokens > 0 do
+    floor(max_tokens * @hard_token_budget_preemptive_stop_percent / 100)
+  end
+
+  defp workspace_has_branch_progress?(running_entry) do
+    case git_workspace_progress_snapshot(Map.get(running_entry, :workspace_path)) do
+      %{state: state} when state in [:branch_commits, :uncommitted_changes] -> true
+      _snapshot -> false
+    end
+  end
+
+  defp block_hard_token_budget_issue(state, issue_id, running_entry, max_tokens, total_tokens, mode) do
     identifier = Map.get(running_entry, :identifier, issue_id)
     session_id = running_entry_session_id(running_entry)
     classification = :token_budget_exceeded
 
-    reason = "token_budget_exceeded total_tokens=#{total_tokens} max_total_tokens=#{max_tokens}"
+    reason =
+      case mode do
+        :preemptive ->
+          "token_budget_exceeded total_tokens=#{total_tokens} max_total_tokens=#{max_tokens} " <>
+            "stop_at_percent=#{@hard_token_budget_preemptive_stop_percent} workspace_progress=none"
+
+        _mode ->
+          "token_budget_exceeded total_tokens=#{total_tokens} max_total_tokens=#{max_tokens}"
+      end
+
     failure_fingerprint = RunnerObserver.failure_fingerprint(reason, classification)
 
     Logger.warning("Issue blocked by hard token budget: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} #{reason}")
@@ -1922,6 +2062,8 @@ defmodule SymphonyElixir.Orchestrator do
   defp handle_retry_issue(%State{} = state, issue_id, attempt, metadata) do
     case Tracker.fetch_candidate_issues() do
       {:ok, issues} ->
+        state = record_tracker_poll_success(state, issues)
+
         issues
         |> find_issue_by_id(issue_id)
         |> handle_retry_issue_lookup(state, issue_id, attempt, metadata)
@@ -1931,7 +2073,7 @@ defmodule SymphonyElixir.Orchestrator do
 
         {:noreply,
          schedule_issue_retry(
-           state,
+           record_tracker_poll_error(state, reason),
            issue_id,
            attempt + 1,
            Map.merge(metadata, %{error: "retry poll failed: #{inspect(reason)}"})
@@ -2434,6 +2576,7 @@ defmodule SymphonyElixir.Orchestrator do
           state: metadata.issue.state,
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
+          branch: workspace_branch(Map.get(metadata, :workspace_path)),
           session_id: metadata.session_id,
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
@@ -2465,7 +2608,8 @@ defmodule SymphonyElixir.Orchestrator do
           failure_fingerprint: Map.get(retry, :failure_fingerprint),
           suggested_action: Map.get(retry, :suggested_action),
           worker_host: Map.get(retry, :worker_host),
-          workspace_path: Map.get(retry, :workspace_path)
+          workspace_path: Map.get(retry, :workspace_path),
+          branch: workspace_branch(Map.get(retry, :workspace_path))
         }
       end)
 
@@ -2490,6 +2634,7 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_timestamp: Map.get(metadata, :last_codex_timestamp),
           last_codex_message: Map.get(metadata, :last_codex_message),
           last_codex_event: Map.get(metadata, :last_codex_event),
+          branch: workspace_branch(Map.get(metadata, :workspace_path)),
           token_budget: Map.get(metadata, :token_budget)
         }
       end)
@@ -2502,6 +2647,8 @@ defmodule SymphonyElixir.Orchestrator do
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
        tracker_rate_limit: tracker_rate_limit_snapshot(state, now_ms),
+       tracker_poll: state.tracker_poll,
+       runtime_readiness: state.runtime_readiness,
        runner: runner_snapshot(state),
        polling: %{
          checking?: state.poll_check_in_progress == true,
@@ -2523,7 +2670,9 @@ defmodule SymphonyElixir.Orchestrator do
          queued: true,
          coalesced: coalesced,
          requested_at: DateTime.utc_now(),
-         operations: ["poll", "reconcile"]
+         operations: ["poll", "reconcile"],
+         last_tracker_poll: state.tracker_poll,
+         runtime_readiness: state.runtime_readiness
        }, state}
     else
       {:reply,
@@ -2532,7 +2681,9 @@ defmodule SymphonyElixir.Orchestrator do
          coalesced: true,
          requested_at: DateTime.utc_now(),
          operations: ["runner_ownership"],
-         reason: "runner is not leader"
+         reason: "runner is not leader",
+         last_tracker_poll: state.tracker_poll,
+         runtime_readiness: state.runtime_readiness
        }, state}
     end
   end

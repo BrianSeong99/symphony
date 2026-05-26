@@ -218,6 +218,9 @@ command, implement that direct path before broad repository searches.
 Your first action after reading this prompt should be a repository command
 such as `pwd`, `git status --short`, `find`, `rg`, or opening the relevant
 guidance file. Do not spend the opening turn only reasoning.
+Never ingest full log files, dependency trees, generated assets, build output,
+cache directories, or coverage artifacts. If validation output is needed, read
+only the failing lines.
 When publishing work, use the repo-local `commit`, `push`, and `land` skills
 only insofar as they route through local git and `gh` CLI commands.
 

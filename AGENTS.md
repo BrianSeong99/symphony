@@ -36,12 +36,20 @@ For the current trial, use the workflow examples in `elixir/`:
 Each workflow monitors one repository. Use one runner process per repository
 lane, with separate worktree roots and logs.
 
+GitHub lanes require a host-native runtime, not a container-only runtime. Before
+pickup, Symphony checks `gh auth`, `git`, `workspace.source_repo`,
+`workspace.root` writability, `codex`, Codex config home, and the
+`codex app-server` command shape. If these fail, the issue should stay unpicked
+and the failure should be visible in `/api/v1/state`, `/api/v1/refresh`, the
+dashboard, and terminal status output.
+
 ## Monitoring Expectations
 
 When another agent moves work into Symphony, it should watch the GitHub issue's
 marked Symphony run-log comment for:
 
 - worktree path and branch
+- latest tracker poll status, candidate count, eligible count, and runtime readiness
 - context packet id, cache hit/miss, and provider fallback reason
 - pickup, PR-open, and merge timestamps
 - retry count

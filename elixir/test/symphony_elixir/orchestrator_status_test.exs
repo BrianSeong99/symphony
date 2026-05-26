@@ -855,6 +855,134 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert %{polling: %{checking?: true, next_poll_in_ms: nil}} = snapshot
   end
 
+  test "orchestrator records GitHub tracker poll counts and host runtime readiness" do
+    source_repo = Path.join(System.tmp_dir!(), "symphony-source-#{System.unique_integer([:positive])}")
+    worktree_root = Path.join(System.tmp_dir!(), "symphony-worktrees-#{System.unique_integer([:positive])}")
+    codex_home = Path.join(System.tmp_dir!(), "symphony-codex-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(source_repo)
+    File.mkdir_p!(codex_home)
+
+    previous_codex_home = System.get_env("CODEX_HOME")
+    System.put_env("CODEX_HOME", codex_home)
+
+    on_exit(fn ->
+      restore_env("CODEX_HOME", previous_codex_home)
+      File.rm_rf(source_repo)
+      File.rm_rf(worktree_root)
+      File.rm_rf(codex_home)
+    end)
+
+    Application.put_env(:symphony_elixir, :runner_readiness_find_executable, fn name ->
+      "/usr/bin/#{name}"
+    end)
+
+    Application.put_env(:symphony_elixir, :runner_readiness_command_runner, fn
+      "gh", ["auth", "status"] ->
+        {"logged in", 0}
+
+      "git", ["-C", ^source_repo, "rev-parse", "--show-toplevel"] ->
+        {source_repo, 0}
+    end)
+
+    Application.put_env(:symphony_elixir, :github_command_runner, fn
+      ["issue", "list" | _args] ->
+        {Jason.encode!([]), 0}
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repository: "BrianSeong99/homelab",
+      tracker_active_labels: ["agent:symphony"],
+      workspace_source_repo: source_repo,
+      workspace_root: worktree_root,
+      codex_command: "codex app-server"
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :GitHubTrackerPollOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    {:noreply, state} = Orchestrator.handle_info(:run_poll_cycle, :sys.get_state(pid))
+
+    assert %{
+             status: :ok,
+             tracker: %{kind: "github", repository: "BrianSeong99/homelab"},
+             candidate_count: 0,
+             eligible_count: 0,
+             dispatchable_count: 0
+           } = state.tracker_poll
+
+    assert %{status: :ok, runtime: "local-host"} = state.runtime_readiness
+  end
+
+  test "orchestrator fails fast when GitHub lane host runtime is missing codex" do
+    source_repo = Path.join(System.tmp_dir!(), "symphony-source-#{System.unique_integer([:positive])}")
+    worktree_root = Path.join(System.tmp_dir!(), "symphony-worktrees-#{System.unique_integer([:positive])}")
+    codex_home = Path.join(System.tmp_dir!(), "symphony-codex-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(source_repo)
+    File.mkdir_p!(codex_home)
+
+    previous_codex_home = System.get_env("CODEX_HOME")
+    System.put_env("CODEX_HOME", codex_home)
+
+    on_exit(fn ->
+      restore_env("CODEX_HOME", previous_codex_home)
+      File.rm_rf(source_repo)
+      File.rm_rf(worktree_root)
+      File.rm_rf(codex_home)
+    end)
+
+    Application.put_env(:symphony_elixir, :runner_readiness_find_executable, fn
+      "codex" -> nil
+      name -> "/usr/bin/#{name}"
+    end)
+
+    Application.put_env(:symphony_elixir, :runner_readiness_command_runner, fn
+      "gh", ["auth", "status"] ->
+        {"logged in", 0}
+
+      "git", ["-C", ^source_repo, "rev-parse", "--show-toplevel"] ->
+        {source_repo, 0}
+    end)
+
+    Application.put_env(:symphony_elixir, :github_command_runner, fn args ->
+      send(self(), {:unexpected_github_poll, args})
+      {Jason.encode!([]), 0}
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repository: "BrianSeong99/homelab",
+      tracker_active_labels: ["agent:symphony"],
+      workspace_source_repo: source_repo,
+      workspace_root: worktree_root,
+      codex_command: "codex app-server"
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :GitHubReadinessFailureOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    {:noreply, state} = Orchestrator.handle_info(:run_poll_cycle, :sys.get_state(pid))
+
+    assert %{status: :error, error: error, classification: :missing_tool} = state.tracker_poll
+    assert error =~ "Runner runtime readiness failed"
+    assert %{status: :error, checks: checks} = state.runtime_readiness
+    assert Enum.any?(checks, &(&1.name == "codex_executable" and &1.status == :error))
+
+    refute_receive {:unexpected_github_poll, _args}, 50
+  end
+
   test "orchestrator triggers an immediate poll cycle shortly after startup" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -1163,6 +1291,82 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert error =~ "total_tokens=600000"
     assert suggested_action =~ "shrink context"
 
+    refute Process.alive?(worker_pid)
+  end
+
+  test "orchestrator preemptively blocks no-progress runs near the hard token budget" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      max_total_tokens: 100_000
+    )
+
+    issue_id = "issue-token-budget-preempt"
+    orchestrator_name = Module.concat(__MODULE__, :PreemptiveTokenBudgetOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-TOKEN-BUDGET-PREEMPT",
+      issue: %Issue{id: issue_id, identifier: "LAB-TOKEN-BUDGET-PREEMPT", state: "In Progress"},
+      workspace_path: nil,
+      session_id: "thread-token-budget-preempt-turn-1",
+      codex_total_tokens: 90_000,
+      codex_last_reported_total_tokens: 90_000,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      %{
+        event: :notification,
+        timestamp: DateTime.utc_now(),
+        payload: %{
+          method: "turn/completed",
+          usage: %{total_tokens: 96_000, input_tokens: 95_500, output_tokens: 500}
+        }
+      }
+    })
+
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.running, issue_id)
+
+    assert %{
+             identifier: "LAB-TOKEN-BUDGET-PREEMPT",
+             classification: :token_budget_exceeded,
+             error: error
+           } = state.blocked[issue_id]
+
+    assert error =~ "stop_at_percent=95"
+    assert error =~ "workspace_progress=none"
     refute Process.alive?(worker_pid)
   end
 
@@ -1971,6 +2175,39 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     checking_rendered = StatusDashboard.format_snapshot_content_for_test(checking_snapshot, 0.0)
     assert checking_rendered =~ "checking now…"
+  end
+
+  test "status dashboard renders tracker poll and runtime readiness evidence" do
+    snapshot_data =
+      {:ok,
+       %{
+         running: [],
+         retrying: [],
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+         rate_limits: nil,
+         tracker_poll: %{
+           status: :error,
+           error: "GitHub issue list failed status=4",
+           candidate_count: nil,
+           eligible_count: nil,
+           dispatchable_count: nil
+         },
+         runtime_readiness: %{
+           status: :error,
+           runtime: "local-host",
+           checks: [
+             %{name: "codex_executable", status: :error, message: "missing required executable: codex"}
+           ]
+         },
+         polling: %{checking?: false, next_poll_in_ms: 2_000, poll_interval_ms: 30_000}
+       }}
+
+    rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
+
+    assert rendered =~ "Tracker poll:"
+    assert rendered =~ "GitHub issue list failed status=4"
+    assert rendered =~ "Runtime readiness:"
+    assert rendered =~ "codex_executable"
   end
 
   test "status dashboard adds a spacer line before backoff queue when no agents are active" do
