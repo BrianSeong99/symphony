@@ -285,6 +285,21 @@ defmodule SymphonyElixir.ExtensionsTest do
     Application.delete_env(:symphony_elixir, :github_command_runner)
   end
 
+  test "GitHub adapter labels issue-list failures clearly" do
+    Application.put_env(:symphony_elixir, :github_command_runner, fn
+      ["issue", "list" | _args] -> {"gh auth failed: GH_TOKEN=secret", 4}
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repository: "BrianSeong99/homelab",
+      tracker_active_labels: ["agent:symphony"]
+    )
+
+    assert {:error, {:github_issue_list_failed, 4, output}} = GitHubAdapter.fetch_candidate_issues()
+    assert output =~ "GH_TOKEN=secret"
+  end
+
   test "linear adapter delegates reads and validates mutation responses" do
     Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
 

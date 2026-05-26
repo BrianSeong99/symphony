@@ -336,6 +336,8 @@ defmodule SymphonyElixir.StatusDashboard do
         rate_limits = Map.get(snapshot, :rate_limits)
         project_link_lines = format_project_link_lines()
         project_refresh_line = format_project_refresh_line(Map.get(snapshot, :polling))
+        tracker_poll_line = format_tracker_poll_line(Map.get(snapshot, :tracker_poll))
+        runtime_readiness_line = format_runtime_readiness_line(Map.get(snapshot, :runtime_readiness))
         codex_input_tokens = Map.get(codex_totals, :input_tokens, 0)
         codex_output_tokens = Map.get(codex_totals, :output_tokens, 0)
         codex_total_tokens = Map.get(codex_totals, :total_tokens, 0)
@@ -366,6 +368,8 @@ defmodule SymphonyElixir.StatusDashboard do
            colorize("│ Rate Limits: ", @ansi_bold) <> format_rate_limits(rate_limits),
            project_link_lines,
            project_refresh_line,
+           tracker_poll_line,
+           runtime_readiness_line,
            colorize("├─ Running", @ansi_bold),
            "│",
            running_table_header_row(running_event_width),
@@ -427,6 +431,48 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_project_refresh_line(_) do
     colorize("│ Next refresh: ", @ansi_bold) <> colorize("n/a", @ansi_gray)
   end
+
+  defp format_tracker_poll_line(%{status: :ok} = tracker_poll) do
+    candidate_count = Map.get(tracker_poll, :candidate_count, 0)
+    eligible_count = Map.get(tracker_poll, :eligible_count, 0)
+    dispatchable_count = Map.get(tracker_poll, :dispatchable_count, 0)
+
+    colorize("│ Tracker poll: ", @ansi_bold) <>
+      colorize("ok", @ansi_green) <>
+      colorize(" candidates #{candidate_count}", @ansi_gray) <>
+      colorize(" eligible #{eligible_count}", @ansi_gray) <>
+      colorize(" dispatchable #{dispatchable_count}", @ansi_gray)
+  end
+
+  defp format_tracker_poll_line(%{status: :error} = tracker_poll) do
+    error = Map.get(tracker_poll, :error) || "unknown"
+
+    colorize("│ Tracker poll: ", @ansi_bold) <>
+      colorize("error", @ansi_red) <>
+      colorize(" #{error}", @ansi_gray)
+  end
+
+  defp format_tracker_poll_line(_tracker_poll), do: []
+
+  defp format_runtime_readiness_line(%{status: :ok} = readiness) do
+    runtime = Map.get(readiness, :runtime) || "unknown"
+    colorize("│ Runtime readiness: ", @ansi_bold) <> colorize("ok #{runtime}", @ansi_green)
+  end
+
+  defp format_runtime_readiness_line(%{status: :error} = readiness) do
+    error =
+      readiness
+      |> Map.get(:checks, [])
+      |> Enum.find(&(&1.status == :error))
+      |> case do
+        nil -> "unknown"
+        check -> "#{check.name}=#{check.message}"
+      end
+
+    colorize("│ Runtime readiness: ", @ansi_bold) <> colorize("error #{error}", @ansi_red)
+  end
+
+  defp format_runtime_readiness_line(_readiness), do: []
 
   defp format_budget_projection_line(running) when is_list(running) do
     running
@@ -599,7 +645,9 @@ defmodule SymphonyElixir.StatusDashboard do
              retrying: retrying,
              codex_totals: codex_totals,
              rate_limits: Map.get(snapshot, :rate_limits),
-             polling: Map.get(snapshot, :polling)
+             polling: Map.get(snapshot, :polling),
+             tracker_poll: Map.get(snapshot, :tracker_poll),
+             runtime_readiness: Map.get(snapshot, :runtime_readiness)
            }}
 
         _ ->

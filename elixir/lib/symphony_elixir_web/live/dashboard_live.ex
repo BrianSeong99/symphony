@@ -237,6 +237,28 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <section class="section-card">
           <div class="section-header">
             <div>
+              <h2 class="section-title">Tracker poll</h2>
+              <p class="section-copy">Latest issue-pickup poll result and eligible work count.</p>
+            </div>
+          </div>
+
+          <pre class="code-panel"><%= pretty_value(Map.get(@payload, :tracker_poll)) %></pre>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Runtime readiness</h2>
+              <p class="section-copy">Host-runtime checks for GitHub runner lanes before dispatch.</p>
+            </div>
+          </div>
+
+          <pre class="code-panel"><%= pretty_value(Map.get(@payload, :runtime_readiness)) %></pre>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
               <h2 class="section-title">Rate limits</h2>
               <p class="section-copy">Latest upstream rate-limit snapshot, when available.</p>
             </div>

@@ -389,6 +389,8 @@ Fields:
   - The effective workspace root is normalized to an absolute path before use.
 - `source_repo` (path string or `$VAR`, OPTIONAL)
   - When set, Symphony creates each issue workspace as a linked git worktree.
+  - GitHub tracker lanes SHOULD require this field and fail readiness before pickup when the path
+    is missing or not a git repository.
 - `base_ref` (string)
   - Default: `origin/main`
 - `branch_prefix` (string)
@@ -447,7 +449,24 @@ Run-log events:
 The context packet MUST NOT include secrets, full logs, dependency trees, or large file contents.
 It is a startup hint, not a replacement for local repository guidance.
 
-#### 5.3.5 `hooks` (object)
+#### 5.3.5 GitHub host-runtime readiness
+
+For `tracker.kind: github`, the orchestrator SHOULD verify host-native runtime readiness before
+fetching and dispatching issues. Required checks:
+
+- `gh` executable and authenticated `gh auth status`
+- `git` executable
+- `workspace.source_repo` exists and is a git repository
+- `workspace.root` is writable or has a writable parent
+- `codex` executable is available
+- Codex config home exists (`CODEX_HOME` or `~/.codex`)
+- `codex.command` invokes `codex app-server`
+
+Readiness failures MUST block dispatch immediately, classify as `missing_tool` or the closest
+deterministic failure, sanitize command output, and expose the latest failure through snapshots,
+the JSON API, and dashboard/status views.
+
+#### 5.3.6 `hooks` (object)
 
 Fields:
 
@@ -1205,6 +1224,12 @@ Behavior:
 Note:
 
 - Workspaces are intentionally preserved after successful runs.
+- Orchestrator snapshots SHOULD include the latest tracker poll result: status, tracker
+  kind/repository/project, candidate count, eligible count, dispatchable count, checked timestamp,
+  and sanitized error/classifier when polling fails.
+- `agent.max_total_tokens` is a hard per-run budget. If no workspace progress is visible, the
+  orchestrator SHOULD stop at a pre-exhaustion threshold before the full hard budget is consumed,
+  preserve the worktree, and classify the block as `token_budget_exceeded`.
 
 ## 11. Issue Tracker Integration Contract (Linear-Compatible)
 
