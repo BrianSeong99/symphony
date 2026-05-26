@@ -106,6 +106,16 @@ defmodule SymphonyElixir.TestSupport do
           workspace_base_ref: "origin/main",
           workspace_branch_prefix: "symphony",
           workspace_context_exclude_patterns: nil,
+          context_ingestion_enabled: false,
+          context_ingestion_provider: "internal",
+          context_ingestion_command: "uvx --from graphifyy graphify",
+          context_ingestion_cache_root: nil,
+          context_ingestion_refresh_policy: "on_base_commit_change",
+          context_ingestion_max_ingestion_seconds: 180,
+          context_ingestion_max_context_packet_tokens: 12_000,
+          context_ingestion_include: [],
+          context_ingestion_exclude: [],
+          context_ingestion_required_for_runner: false,
           worker_ssh_hosts: [],
           worker_max_concurrent_agents_per_host: nil,
           max_concurrent_agents: 10,
@@ -156,6 +166,16 @@ defmodule SymphonyElixir.TestSupport do
     workspace_base_ref = Keyword.get(config, :workspace_base_ref)
     workspace_branch_prefix = Keyword.get(config, :workspace_branch_prefix)
     workspace_context_exclude_patterns = Keyword.get(config, :workspace_context_exclude_patterns)
+    context_ingestion_enabled = Keyword.get(config, :context_ingestion_enabled)
+    context_ingestion_provider = Keyword.get(config, :context_ingestion_provider)
+    context_ingestion_command = Keyword.get(config, :context_ingestion_command)
+    context_ingestion_cache_root = Keyword.get(config, :context_ingestion_cache_root)
+    context_ingestion_refresh_policy = Keyword.get(config, :context_ingestion_refresh_policy)
+    context_ingestion_max_ingestion_seconds = Keyword.get(config, :context_ingestion_max_ingestion_seconds)
+    context_ingestion_max_context_packet_tokens = Keyword.get(config, :context_ingestion_max_context_packet_tokens)
+    context_ingestion_include = Keyword.get(config, :context_ingestion_include)
+    context_ingestion_exclude = Keyword.get(config, :context_ingestion_exclude)
+    context_ingestion_required_for_runner = Keyword.get(config, :context_ingestion_required_for_runner)
     worker_ssh_hosts = Keyword.get(config, :worker_ssh_hosts)
     worker_max_concurrent_agents_per_host = Keyword.get(config, :worker_max_concurrent_agents_per_host)
     max_concurrent_agents = Keyword.get(config, :max_concurrent_agents)
@@ -209,6 +229,17 @@ defmodule SymphonyElixir.TestSupport do
         "  base_ref: #{yaml_value(workspace_base_ref)}",
         "  branch_prefix: #{yaml_value(workspace_branch_prefix)}",
         "  context_exclude_patterns: #{yaml_value(workspace_context_exclude_patterns)}",
+        "context_ingestion:",
+        "  enabled: #{yaml_value(context_ingestion_enabled)}",
+        "  provider: #{yaml_value(context_ingestion_provider)}",
+        "  command: #{yaml_value(context_ingestion_command)}",
+        "  cache_root: #{yaml_value(context_ingestion_cache_root)}",
+        "  refresh_policy: #{yaml_value(context_ingestion_refresh_policy)}",
+        "  max_ingestion_seconds: #{yaml_value(context_ingestion_max_ingestion_seconds)}",
+        "  max_context_packet_tokens: #{yaml_value(context_ingestion_max_context_packet_tokens)}",
+        "  include: #{yaml_value(context_ingestion_include)}",
+        "  exclude: #{yaml_value(context_ingestion_exclude)}",
+        "  required_for_runner: #{yaml_value(context_ingestion_required_for_runner)}",
         worker_yaml(worker_ssh_hosts, worker_max_concurrent_agents_per_host),
         "agent:",
         "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",

@@ -139,6 +139,51 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  defmodule ContextIngestion do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:enabled, :boolean, default: false)
+      field(:provider, :string, default: "internal")
+      field(:command, :string, default: "uvx --from graphifyy graphify")
+      field(:cache_root, :string)
+      field(:refresh_policy, :string, default: "on_base_commit_change")
+      field(:max_ingestion_seconds, :integer, default: 180)
+      field(:max_context_packet_tokens, :integer, default: 12_000)
+      field(:include, {:array, :string}, default: [])
+      field(:exclude, {:array, :string}, default: [])
+      field(:required_for_runner, :boolean, default: false)
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(
+        attrs,
+        [
+          :enabled,
+          :provider,
+          :command,
+          :cache_root,
+          :refresh_policy,
+          :max_ingestion_seconds,
+          :max_context_packet_tokens,
+          :include,
+          :exclude,
+          :required_for_runner
+        ],
+        empty_values: []
+      )
+      |> validate_inclusion(:provider, ["internal", "graphify"])
+      |> validate_inclusion(:refresh_policy, ["on_base_commit_change", "always", "manual"])
+      |> validate_number(:max_ingestion_seconds, greater_than: 0)
+      |> validate_number(:max_context_packet_tokens, greater_than: 0)
+    end
+  end
+
   defmodule Worker do
     @moduledoc false
     use Ecto.Schema
@@ -330,6 +375,7 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
     embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:context_ingestion, ContextIngestion, on_replace: :update, defaults_to_struct: true)
     embeds_one(:worker, Worker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:agent, Agent, on_replace: :update, defaults_to_struct: true)
     embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
@@ -422,6 +468,7 @@ defmodule SymphonyElixir.Config.Schema do
     |> cast_embed(:tracker, with: &Tracker.changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
+    |> cast_embed(:context_ingestion, with: &ContextIngestion.changeset/2)
     |> cast_embed(:worker, with: &Worker.changeset/2)
     |> cast_embed(:agent, with: &Agent.changeset/2)
     |> cast_embed(:codex, with: &Codex.changeset/2)
@@ -446,13 +493,25 @@ defmodule SymphonyElixir.Config.Schema do
         branch_prefix: normalize_string_setting(settings.workspace.branch_prefix, "symphony")
     }
 
+    context_ingestion = %{
+      settings.context_ingestion
+      | cache_root:
+          resolve_context_cache_root(
+            settings.context_ingestion.cache_root,
+            settings.workspace.root
+          ),
+        command: normalize_string_setting(settings.context_ingestion.command, "uvx --from graphifyy graphify"),
+        include: normalize_string_list(settings.context_ingestion.include),
+        exclude: normalize_string_list(settings.context_ingestion.exclude)
+    }
+
     codex = %{
       settings.codex
       | approval_policy: normalize_keys(settings.codex.approval_policy),
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
-    %{settings | tracker: tracker, workspace: workspace, codex: codex}
+    %{settings | tracker: tracker, workspace: workspace, context_ingestion: context_ingestion, codex: codex}
   end
 
   defp normalize_keys(value) when is_map(value) do
@@ -514,6 +573,35 @@ defmodule SymphonyElixir.Config.Schema do
       path -> path
     end
   end
+
+  defp resolve_context_cache_root(nil, workspace_root), do: default_context_cache_root(workspace_root)
+  defp resolve_context_cache_root("", workspace_root), do: default_context_cache_root(workspace_root)
+
+  defp resolve_context_cache_root(value, workspace_root) when is_binary(value) do
+    case normalize_path_token(value) do
+      :missing -> default_context_cache_root(workspace_root)
+      "" -> default_context_cache_root(workspace_root)
+      path -> path
+    end
+  end
+
+  defp default_context_cache_root(workspace_root) when is_binary(workspace_root) and workspace_root != "" do
+    Path.join(resolve_path_value(workspace_root, Path.join(System.tmp_dir!(), "symphony_workspaces")), ".symphony_context")
+  end
+
+  defp default_context_cache_root(_workspace_root) do
+    Path.join([System.tmp_dir!(), "symphony_workspaces", ".symphony_context"])
+  end
+
+  defp normalize_string_list(values) when is_list(values) do
+    values
+    |> Enum.map(&to_string/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp normalize_string_list(_values), do: []
 
   defp normalize_string_setting(value, fallback) when is_binary(value) do
     case String.trim(value) do

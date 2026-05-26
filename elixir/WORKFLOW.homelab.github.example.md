@@ -30,9 +30,44 @@ workspace:
     - target/
     - .venv/
     - venv/
+    - graphify-out/
     - "*.log"
     - "*.tmp"
     - "*.tsbuildinfo"
+context_ingestion:
+  enabled: true
+  provider: graphify
+  command: uvx --from graphifyy graphify
+  refresh_policy: on_base_commit_change
+  max_ingestion_seconds: 180
+  max_context_packet_tokens: 12000
+  include:
+    - AGENTS.md
+    - CLAUDE.md
+    - WORKFLOW*.md
+    - .github/pull_request_template.md
+    - .github/workflows/*.{yml,yaml}
+    - docs/**/*.md
+    - app/**/*.{js,jsx,ts,tsx,md}
+    - src/**/*.{js,jsx,ts,tsx,md}
+    - lib/**/*.{js,jsx,ts,tsx,md}
+    - config/**/*.{js,json,yml,yaml,toml}
+    - Makefile
+    - Justfile
+    - package.json
+    - compose*.yml
+    - compose*.yaml
+    - docker-compose*.yml
+    - docker-compose*.yaml
+  exclude:
+    - deps/**
+    - _build/**
+    - node_modules/**
+    - .next/**
+    - graphify-out/**
+    - logs/**
+    - tmp/**
+  required_for_runner: false
 hooks:
   after_create: |
     if git remote get-url origin >/dev/null 2>&1; then

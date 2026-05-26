@@ -138,6 +138,17 @@ sources:
     confidence: 0.75
     applicable_patterns:
       - context-freshness-check
+      - bounded-codebase-context-packet
+  - id: graphify-codebase-context
+    title: "Graphify codebase graph context"
+    url: "https://graphify.net/zh/"
+    vendor: "graphify"
+    topic: "codebase-graph-context"
+    last_reviewed_on: "2026-05-26"
+    confidence: 0.7
+    applicable_patterns:
+      - context-freshness-check
+      - bounded-codebase-context-packet
   - id: cursor-memories
     title: "Cursor memories"
     url: "https://docs.cursor.com/en/context/memories"

@@ -185,6 +185,25 @@ when Symphony reaches a terminal state.
 For the Homelab and WPRC week trial, see
 [`../docs/github-runner-week-trial.md`](../docs/github-runner-week-trial.md).
 
+Optional bounded codebase context ingestion can be enabled per workflow. During
+the Homelab pilot this uses Graphify when available and falls back to Symphony's
+internal file map when the provider is missing or fails:
+
+```yaml
+context_ingestion:
+  enabled: true
+  provider: graphify
+  command: uvx --from graphifyy graphify
+  refresh_policy: on_base_commit_change
+  max_ingestion_seconds: 180
+  max_context_packet_tokens: 12000
+  required_for_runner: false
+```
+
+The resulting context packet is attached to the first agent prompt and logged
+to the issue with provider, cache status, graph hash, token estimate, and
+fallback reason when applicable.
+
 Notes:
 
 - If a value is missing, defaults are used.

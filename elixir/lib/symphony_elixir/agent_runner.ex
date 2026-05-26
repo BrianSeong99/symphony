@@ -5,7 +5,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   require Logger
   alias SymphonyElixir.Codex.AppServer
-  alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
+  alias SymphonyElixir.{Config, ContextIngestion, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
   @type worker_host :: String.t() | nil
 
@@ -34,7 +34,9 @@ defmodule SymphonyElixir.AgentRunner do
         send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)
 
         try do
-          with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host) do
+          with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host),
+               {:ok, context_packet} <- ContextIngestion.prepare(workspace, issue) do
+            opts = maybe_put_context_packet(opts, context_packet)
             run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host)
           end
         after
@@ -51,6 +53,9 @@ defmodule SymphonyElixir.AgentRunner do
       send_codex_update(recipient, issue, message)
     end
   end
+
+  defp maybe_put_context_packet(opts, nil), do: opts
+  defp maybe_put_context_packet(opts, context_packet), do: Keyword.put(opts, :context_packet, context_packet)
 
   defp send_codex_update(recipient, %Issue{id: issue_id}, message)
        when is_binary(issue_id) and is_pid(recipient) do
