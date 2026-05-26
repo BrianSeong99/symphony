@@ -30,6 +30,8 @@ For the current trial, use the workflow examples in `elixir/`:
 - WPRC intelligence stack: `WORKFLOW.wprc-intelligence-stack.github.example.md`
 - CFO / Finance-OS: `WORKFLOW.cfo.github.example.md`
 - CMO / Marketing-OS: `WORKFLOW.cmo.github.example.md`
+- Omega interface: `WORKFLOW.omega-interface.github.example.md`
+- Omega Zone: `WORKFLOW.omega-zone.github.example.md`
 
 Each workflow monitors one repository. Use one runner process per repository
 lane, with separate worktree roots and logs.
@@ -84,4 +86,6 @@ itself.
 - Public GitHub text uses Brian's identity only, with no tool attribution.
 - Do not assume Linear GitHub Issues Sync is enabled.
 - For target repos, preserve their local PR, validation, and merge rules.
+- For Chainless/Omega repos, preserve existing team labels, milestones,
+  projects, issue templates, branch protection, and public-safe boundaries.
 - For Symphony itself, run `make -C elixir all` before handoff when feasible.

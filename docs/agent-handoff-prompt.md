@@ -18,9 +18,9 @@ Current rule:
 - Moving an issue to GitHub Projects Todo is not enough.
 - To let Symphony pick up work, the target GitHub issue must be open and have
   the label `agent:symphony`.
-- Homelab is the active runner lane.
-- WPRC website and WPRC intelligence stack have workflow examples but should be
-  enabled as separate runner lanes when Brian asks.
+- Active runner lanes currently include Homelab, WPRC website, WPRC
+  intelligence stack, CFO / Finance-OS, CMO / Marketing-OS, Omega interface,
+  and Omega Zone.
 
 For Homelab work:
 
@@ -66,4 +66,8 @@ Useful current files:
   /Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/elixir/WORKFLOW.cfo.github.example.md
 - CMO workflow:
   /Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/elixir/WORKFLOW.cmo.github.example.md
+- Omega interface workflow:
+  /Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/elixir/WORKFLOW.omega-interface.github.example.md
+- Omega Zone workflow:
+  /Users/brianseong/Develop/Labs/worktrees/symphony-homelab-deployment/elixir/WORKFLOW.omega-zone.github.example.md
 ```
