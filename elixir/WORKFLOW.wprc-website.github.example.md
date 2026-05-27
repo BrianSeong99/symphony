@@ -56,6 +56,8 @@ agent:
   startup_progress_timeout_ms: 60000
   startup_progress_max_tokens: 40000
   max_total_tokens: 150000
+  required_validation_commands:
+    - npm run build
   prompt_mode: compact
 codex:
   command: SYMPHONY_GIT_BASE_REF=origin/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=Whitepaper-Reading-Club/wprc-website SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
@@ -74,5 +76,7 @@ Use the current git worktree only. The branch must be based on `main`, and the P
 Avoid dependency, cache, build, coverage, and generated-artifact paths during exploration. Do not run package installs in setup. Install dependencies only after you know the validation path requires them.
 
 Keep startup context lean. After the worktree check, run `git diff --stat`; if this worktree already has relevant edits, validate and repair those edits before broad rediscovery. Use targeted `rg` and line-range reads. Keep shell commands single-purpose; avoid chained reads with `&&`, semicolons, or separator `echo` blocks. Optional connectors and MCP tools are not required for WPRC GitHub issue work.
+
+Before any push, PR-ready update, or merge handoff, run `npm run build` in the worktree and treat parser, CSS, TypeScript, or Next.js build failures as hard blockers. Do not report validation as passing unless the required command completed successfully in the current run. If the issue changes UI behavior or visuals, run browser or screenshot validation and report the artifact path or URL in the issue/PR evidence.
 
 Finish the issue end-to-end: implement, validate, commit, push, open a PR that closes the issue, and self-merge when checks pass and repository policy allows it.

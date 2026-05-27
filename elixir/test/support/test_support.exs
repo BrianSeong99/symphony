@@ -132,6 +132,7 @@ defmodule SymphonyElixir.TestSupport do
           startup_progress_timeout_ms: 0,
           startup_progress_max_tokens: 0,
           max_total_tokens: 500_000,
+          required_validation_commands: [],
           prompt_mode: "workflow",
           max_concurrent_agents_by_state: %{},
           codex_command: "codex app-server",
@@ -194,6 +195,7 @@ defmodule SymphonyElixir.TestSupport do
     startup_progress_timeout_ms = Keyword.get(config, :startup_progress_timeout_ms)
     startup_progress_max_tokens = Keyword.get(config, :startup_progress_max_tokens)
     max_total_tokens = Keyword.get(config, :max_total_tokens)
+    required_validation_commands = Keyword.get(config, :required_validation_commands)
     prompt_mode = Keyword.get(config, :prompt_mode)
     max_concurrent_agents_by_state = Keyword.get(config, :max_concurrent_agents_by_state)
     codex_command = Keyword.get(config, :codex_command)
@@ -260,6 +262,7 @@ defmodule SymphonyElixir.TestSupport do
         "  startup_progress_timeout_ms: #{yaml_value(startup_progress_timeout_ms)}",
         "  startup_progress_max_tokens: #{yaml_value(startup_progress_max_tokens)}",
         "  max_total_tokens: #{yaml_value(max_total_tokens)}",
+        "  required_validation_commands: #{yaml_value(required_validation_commands)}",
         "  prompt_mode: #{yaml_value(prompt_mode)}",
         "  max_concurrent_agents_by_state: #{yaml_value(max_concurrent_agents_by_state)}",
         "codex:",

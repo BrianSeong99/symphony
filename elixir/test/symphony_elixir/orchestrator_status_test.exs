@@ -1650,6 +1650,69 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert summary.likely_relevant_files == ["lib/example.ex"]
   end
 
+  test "session startup without agent activity is blocked even after context progress" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      startup_progress_timeout_ms: 1,
+      startup_progress_max_tokens: 0,
+      max_total_tokens: 500_000
+    )
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    issue_id = "issue-empty-session-progress"
+    now = DateTime.utc_now()
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "LAB-EMPTY-SESSION",
+      issue: %Issue{id: issue_id, identifier: "LAB-EMPTY-SESSION", state: "In Progress"},
+      workspace_path: nil,
+      session_id: "thread-empty-session-turn-1",
+      recent_codex_events: [],
+      startup_progress_met: true,
+      startup_progress_kind: :context_checkpoint,
+      startup_progress_summary: %{next_action: "Start targeted implementation."},
+      startup_progress_at: DateTime.add(now, -3, :second),
+      session_started_at: DateTime.add(now, -2, :second),
+      session_started_tokens: 0,
+      agent_activity_seen: false,
+      codex_total_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: now,
+      last_codex_event: :context_checkpoint,
+      started_at: DateTime.add(now, -3, :second)
+    }
+
+    state = %Orchestrator.State{
+      running: %{issue_id => running_entry},
+      claimed: MapSet.new([issue_id])
+    }
+
+    next_state = Orchestrator.reconcile_no_progress_running_issues_for_test(state)
+
+    refute Map.has_key?(next_state.running, issue_id)
+    refute Process.alive?(worker_pid)
+
+    assert %{
+             identifier: "LAB-EMPTY-SESSION",
+             classification: :startup_no_progress,
+             error: error,
+             startup_progress_kind: :context_checkpoint,
+             agent_activity_seen: false
+           } = next_state.blocked[issue_id]
+
+    assert error =~ "agent_activity_timeout"
+  end
+
   test "blocked issues are not dispatchable until the block is cleared" do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
 
@@ -2013,6 +2076,198 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              classification: :auth_failure,
              error: "agent completed with blocking classification=auth_failure"
            } = state.blocked[issue_id]
+  end
+
+  test "orchestrator blocks normal completion when required validation was not observed" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      required_validation_commands: ["npm run build"]
+    )
+
+    issue_id = "issue-required-validation-missing"
+    orchestrator_name = Module.concat(__MODULE__, :RequiredValidationMissingOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    ref = make_ref()
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: ref,
+      identifier: "LAB-REQUIRED-VALIDATION",
+      issue: %Issue{id: issue_id, identifier: "LAB-REQUIRED-VALIDATION", state: "Todo"},
+      started_at: DateTime.utc_now(),
+      session_id: "thread-required-validation-turn-1",
+      validation_statuses: %{}
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {:DOWN, ref, :process, worker_pid, :normal})
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.retry_attempts, issue_id)
+
+    assert %{
+             identifier: "LAB-REQUIRED-VALIDATION",
+             classification: :required_validation_missing,
+             error: error,
+             required_validation_commands: ["npm run build"]
+           } = state.blocked[issue_id]
+
+    assert error =~ "required validation not satisfied"
+    assert error =~ "npm run build"
+  end
+
+  test "orchestrator allows normal completion after required validation passes" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      required_validation_commands: ["npm run build"]
+    )
+
+    issue_id = "issue-required-validation-passed"
+    orchestrator_name = Module.concat(__MODULE__, :RequiredValidationPassedOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    ref = make_ref()
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: ref,
+      identifier: "LAB-REQUIRED-VALIDATION-PASSED",
+      issue: %Issue{id: issue_id, identifier: "LAB-REQUIRED-VALIDATION-PASSED", state: "Todo"},
+      started_at: DateTime.utc_now(),
+      session_id: "thread-required-validation-passed-turn-1",
+      recent_codex_events: [],
+      validation_statuses: %{}
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      %{
+        event: :notification,
+        timestamp: DateTime.utc_now(),
+        payload: %{
+          method: "item/completed",
+          params: %{
+            item: %{type: "commandExecution", status: "completed"},
+            command: "npm run build",
+            title: "command execution (completed)"
+          }
+        },
+        raw: """
+        item completed: command execution (call_789, completed)
+        npm run build
+        """
+      }
+    })
+
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+    assert get_in(state.running, [issue_id, :validation_statuses, "npm run build", :status]) == :passed
+
+    send(pid, {:DOWN, ref, :process, worker_pid, :normal})
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.blocked, issue_id)
+  end
+
+  test "orchestrator blocks empty normal completion after a session starts" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
+
+    issue_id = "issue-empty-normal-completion"
+    orchestrator_name = Module.concat(__MODULE__, :EmptyNormalCompletionOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    ref = make_ref()
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: ref,
+      identifier: "LAB-EMPTY-NORMAL",
+      issue: %Issue{id: issue_id, identifier: "LAB-EMPTY-NORMAL", state: "Todo"},
+      started_at: DateTime.utc_now(),
+      session_id: "thread-empty-normal-turn-1",
+      session_started_at: DateTime.utc_now(),
+      agent_activity_seen: false
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {:DOWN, ref, :process, worker_pid, :normal})
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.running, issue_id)
+
+    assert %{
+             identifier: "LAB-EMPTY-NORMAL",
+             classification: :startup_no_progress,
+             error: error,
+             agent_activity_seen: false
+           } = state.blocked[issue_id]
+
+    assert error =~ "without observable"
   end
 
   test "orchestrator blocks repeated equivalent stalls at the retry ceiling" do

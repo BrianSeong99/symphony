@@ -72,6 +72,23 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_event(:notification, payload) == :validation_failure_repeat
   end
 
+  test "classifies failed frontend build notifications as validation failures" do
+    payload = %{
+      payload: %{
+        "method" => "item/completed",
+        "params" => %{"title" => "command execution (failed)"}
+      },
+      raw: """
+      item completed: command execution (call_456, failed)
+      npm run build
+      CssSyntaxError: app/globals.css:2886:1: Unexpected }
+      """
+    }
+
+    assert RunnerObserver.classify_event(:notification, payload) == :validation_failure_repeat
+    assert RunnerObserver.classify_failure("required validation not satisfied before completion") == :required_validation_missing
+  end
+
   test "preserves preflight classifications through wrapped worker failures" do
     failure = %{
       classification: :missing_tool,

@@ -39,6 +39,7 @@ defmodule SymphonyElixir.Orchestrator do
                                                 :missing_tool,
                                                 :no_progress_budget_exceeded,
                                                 :permission_denied_loop,
+                                                :required_validation_missing,
                                                 :requirements_mismatch,
                                                 :startup_no_progress,
                                                 :validation_failure_repeat
@@ -330,6 +331,12 @@ defmodule SymphonyElixir.Orchestrator do
       classification = normal_completion_blocking_classification(running_entry) ->
         block_normal_completion_agent_down(state, issue_id, running_entry, session_id, classification)
 
+      agent_activity_completion_blocker?(running_entry) ->
+        block_no_agent_activity_agent_down(state, issue_id, running_entry, session_id)
+
+      required_validation = required_validation_blocker(running_entry) ->
+        block_required_validation_agent_down(state, issue_id, running_entry, session_id, required_validation)
+
       true ->
         Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
 
@@ -370,6 +377,48 @@ defmodule SymphonyElixir.Orchestrator do
       |> Map.put(:classification, classification)
       |> Map.put(:failure_fingerprint, RunnerObserver.failure_fingerprint(error, classification))
       |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
+
+    block_issue_from_entry(state, issue_id, running_entry, error)
+  end
+
+  defp block_no_agent_activity_agent_down(state, issue_id, running_entry, session_id) do
+    classification = :startup_no_progress
+    error = "agent completed without observable planner, command, file, reasoning, or message activity after session start"
+
+    Logger.warning(
+      "Agent task blocked after empty normal completion for issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} " <>
+        "session_id=#{session_id}: #{error}"
+    )
+
+    running_entry =
+      running_entry
+      |> Map.put(:classification, classification)
+      |> Map.put(:failure_fingerprint, RunnerObserver.failure_fingerprint(error, classification))
+      |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
+
+    block_issue_from_entry(state, issue_id, running_entry, error)
+  end
+
+  defp block_required_validation_agent_down(state, issue_id, running_entry, session_id, {classification, commands}) do
+    command_text =
+      commands
+      |> List.wrap()
+      |> Enum.join(", ")
+
+    error = "required validation not satisfied before completion classification=#{classification} commands=#{command_text}"
+
+    Logger.warning(
+      "Agent task blocked after normal completion for issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} " <>
+        "session_id=#{session_id}: #{error}"
+    )
+
+    running_entry =
+      running_entry
+      |> Map.put(:classification, classification)
+      |> Map.put(:failure_fingerprint, RunnerObserver.failure_fingerprint(error, classification))
+      |> Map.put(:suggested_action, RunnerObserver.suggested_action(classification))
+      |> Map.put(:required_validation_commands, required_validation_commands())
+      |> Map.put(:validation_statuses, Map.get(running_entry, :validation_statuses, %{}))
 
     block_issue_from_entry(state, issue_id, running_entry, error)
   end
@@ -961,9 +1010,11 @@ defmodule SymphonyElixir.Orchestrator do
     settings = Config.settings!().agent
     timeout_ms = settings.no_progress_timeout_ms
     max_tokens = settings.no_progress_max_tokens
+    startup_activity_timeout_ms = settings.startup_progress_timeout_ms
+    startup_activity_max_tokens = settings.startup_progress_max_tokens
 
     cond do
-      timeout_ms <= 0 and max_tokens <= 0 ->
+      timeout_ms <= 0 and max_tokens <= 0 and startup_activity_timeout_ms <= 0 and startup_activity_max_tokens <= 0 ->
         state
 
       map_size(state.running) == 0 ->
@@ -973,10 +1024,109 @@ defmodule SymphonyElixir.Orchestrator do
         now = DateTime.utc_now()
 
         Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
-          maybe_block_no_progress_issue(state_acc, issue_id, running_entry, now, timeout_ms, max_tokens)
+          state_acc
+          |> maybe_block_agent_activity_no_progress_issue(issue_id, running_entry, now, settings)
+          |> maybe_block_no_progress_issue_if_running(issue_id, running_entry, now, timeout_ms, max_tokens)
         end)
     end
   end
+
+  defp maybe_block_no_progress_issue_if_running(%State{} = state, issue_id, running_entry, now, timeout_ms, max_tokens) do
+    if Map.has_key?(state.running, issue_id) do
+      maybe_block_no_progress_issue(state, issue_id, Map.get(state.running, issue_id, running_entry), now, timeout_ms, max_tokens)
+    else
+      state
+    end
+  end
+
+  defp maybe_block_agent_activity_no_progress_issue(%State{} = state, issue_id, running_entry, now, settings) do
+    case agent_activity_no_progress_trigger(running_entry, now, settings) do
+      nil ->
+        state
+
+      {trigger, elapsed_ms, token_delta} ->
+        block_startup_no_progress_issue(
+          state,
+          issue_id,
+          running_entry,
+          elapsed_ms,
+          token_delta,
+          trigger
+        )
+    end
+  end
+
+  defp agent_activity_no_progress_trigger(running_entry, now, settings) do
+    session_started_at = Map.get(running_entry, :session_started_at)
+
+    time_trigger =
+      agent_activity_time_trigger(
+        settings.startup_progress_timeout_ms,
+        session_started_at,
+        now,
+        running_entry
+      )
+
+    token_trigger = agent_activity_token_trigger(settings.startup_progress_max_tokens, running_entry)
+
+    cond do
+      Map.get(running_entry, :agent_activity_seen) == true ->
+        nil
+
+      not match?(%DateTime{}, session_started_at) ->
+        nil
+
+      time_trigger ->
+        time_trigger
+
+      token_trigger ->
+        token_trigger
+
+      true ->
+        nil
+    end
+  end
+
+  defp agent_activity_time_trigger(timeout_ms, %DateTime{} = session_started_at, %DateTime{} = now, running_entry)
+       when is_integer(timeout_ms) and timeout_ms > 0 do
+    elapsed_ms = max(0, DateTime.diff(now, session_started_at, :millisecond))
+
+    if elapsed_ms > timeout_ms do
+      {:agent_activity_timeout, elapsed_ms, agent_activity_token_delta(running_entry)}
+    end
+  end
+
+  defp agent_activity_time_trigger(_timeout_ms, _session_started_at, _now, _running_entry), do: nil
+
+  defp agent_activity_token_trigger(max_tokens, running_entry)
+       when is_integer(max_tokens) and max_tokens > 0 do
+    token_delta = agent_activity_token_delta(running_entry)
+
+    if token_delta > max_tokens do
+      elapsed_ms =
+        case Map.get(running_entry, :session_started_at) do
+          %DateTime{} = session_started_at -> max(0, DateTime.diff(DateTime.utc_now(), session_started_at, :millisecond))
+          _ -> nil
+        end
+
+      {:agent_activity_tokens, elapsed_ms, token_delta}
+    end
+  end
+
+  defp agent_activity_token_trigger(_max_tokens, _running_entry), do: nil
+
+  defp agent_activity_token_delta(running_entry) when is_map(running_entry) do
+    current = no_progress_token_total(running_entry)
+    baseline = Map.get(running_entry, :session_started_tokens, 0)
+
+    cond do
+      not is_integer(current) -> 0
+      not is_integer(baseline) -> current
+      true -> max(0, current - baseline)
+    end
+  end
+
+  defp agent_activity_token_delta(_running_entry), do: 0
 
   defp maybe_block_hard_token_budget_issue(%State{} = state, issue_id, running_entry) do
     max_tokens = Config.settings!().agent.max_total_tokens
@@ -1529,6 +1679,13 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp normal_completion_blocking_classification(_running_entry), do: nil
 
+  defp agent_activity_completion_blocker?(running_entry) when is_map(running_entry) do
+    match?(%DateTime{}, Map.get(running_entry, :session_started_at)) and
+      Map.get(running_entry, :agent_activity_seen) != true
+  end
+
+  defp agent_activity_completion_blocker?(_running_entry), do: false
+
   defp classify_completion_text(nil), do: nil
 
   defp classify_completion_text(text) do
@@ -1646,6 +1803,13 @@ defmodule SymphonyElixir.Orchestrator do
       startup_progress_kind: Map.get(running_entry, :startup_progress_kind),
       startup_progress_summary: Map.get(running_entry, :startup_progress_summary),
       startup_progress_at: Map.get(running_entry, :startup_progress_at),
+      session_started_at: Map.get(running_entry, :session_started_at),
+      agent_activity_seen: Map.get(running_entry, :agent_activity_seen, false),
+      agent_activity_kind: Map.get(running_entry, :agent_activity_kind),
+      agent_activity_summary: Map.get(running_entry, :agent_activity_summary),
+      agent_activity_at: Map.get(running_entry, :agent_activity_at),
+      required_validation_commands: required_validation_commands(),
+      validation_statuses: Map.get(running_entry, :validation_statuses, %{}),
       token_budget: token_budget_snapshot(running_entry, DateTime.utc_now()),
       classification: classification,
       failure_fingerprint:
@@ -1877,6 +2041,13 @@ defmodule SymphonyElixir.Orchestrator do
           startup_progress_kind: nil,
           startup_progress_summary: nil,
           startup_progress_at: nil,
+          session_started_at: nil,
+          session_started_tokens: 0,
+          agent_activity_seen: false,
+          agent_activity_kind: nil,
+          agent_activity_summary: nil,
+          agent_activity_at: nil,
+          validation_statuses: %{},
           codex_app_server_pid: nil,
           codex_input_tokens: 0,
           codex_cached_input_tokens: 0,
@@ -2410,8 +2581,15 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp retry_limit_exceeded?(_equivalent_attempt, _max_attempts, _failure_fingerprint), do: false
 
-  defp non_retryable_classification?(classification) when classification in [:missing_tool, :auth_failure, :permission_denied_loop],
-    do: true
+  defp non_retryable_classification?(classification)
+       when classification in [
+              :missing_tool,
+              :auth_failure,
+              :permission_denied_loop,
+              :required_validation_missing,
+              :validation_failure_repeat
+            ],
+       do: true
 
   defp non_retryable_classification?(_classification), do: false
 
@@ -2680,6 +2858,13 @@ defmodule SymphonyElixir.Orchestrator do
           startup_progress_kind: Map.get(metadata, :startup_progress_kind),
           startup_progress_summary: Map.get(metadata, :startup_progress_summary),
           startup_progress_at: Map.get(metadata, :startup_progress_at),
+          session_started_at: Map.get(metadata, :session_started_at),
+          agent_activity_seen: Map.get(metadata, :agent_activity_seen, false),
+          agent_activity_kind: Map.get(metadata, :agent_activity_kind),
+          agent_activity_summary: Map.get(metadata, :agent_activity_summary),
+          agent_activity_at: Map.get(metadata, :agent_activity_at),
+          required_validation_commands: required_validation_commands(),
+          validation_statuses: Map.get(metadata, :validation_statuses, %{}),
           classification: Map.get(metadata, :classification),
           failure_fingerprint: Map.get(metadata, :failure_fingerprint),
           suggested_action: Map.get(metadata, :suggested_action),
@@ -2732,6 +2917,13 @@ defmodule SymphonyElixir.Orchestrator do
           startup_progress_kind: Map.get(metadata, :startup_progress_kind),
           startup_progress_summary: Map.get(metadata, :startup_progress_summary),
           startup_progress_at: Map.get(metadata, :startup_progress_at),
+          session_started_at: Map.get(metadata, :session_started_at),
+          agent_activity_seen: Map.get(metadata, :agent_activity_seen, false),
+          agent_activity_kind: Map.get(metadata, :agent_activity_kind),
+          agent_activity_summary: Map.get(metadata, :agent_activity_summary),
+          agent_activity_at: Map.get(metadata, :agent_activity_at),
+          required_validation_commands: Map.get(metadata, :required_validation_commands, []),
+          validation_statuses: Map.get(metadata, :validation_statuses, %{}),
           branch: workspace_branch(Map.get(metadata, :workspace_path)),
           token_budget: Map.get(metadata, :token_budget)
         }
@@ -2877,9 +3069,21 @@ defmodule SymphonyElixir.Orchestrator do
     last_reported_total = Map.get(running_entry, :codex_last_reported_total_tokens, 0)
     turn_count = Map.get(running_entry, :turn_count, 0)
     classification = RunnerObserver.classify_event(event, update[:payload] || update[:raw])
+
+    {validation_statuses, validation_classification} =
+      update_validation_statuses(Map.get(running_entry, :validation_statuses, %{}), update, timestamp)
+
     existing_classification = Map.get(running_entry, :classification)
-    effective_classification = classification || existing_classification
+    effective_classification = validation_classification || classification || existing_classification
     progress_milestone = codex_progress_milestone(update)
+    agent_activity_milestone = codex_agent_activity_milestone(update)
+
+    suggested_action =
+      suggested_action_for_update(
+        running_entry,
+        validation_classification || classification,
+        effective_classification
+      )
 
     updated_entry =
       running_entry
@@ -2900,11 +3104,14 @@ defmodule SymphonyElixir.Orchestrator do
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
         turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
+        validation_statuses: validation_statuses,
         classification: effective_classification,
         failure_fingerprint: failure_fingerprint_for_update(running_entry, update, effective_classification),
-        suggested_action: suggested_action_for_update(running_entry, classification, effective_classification)
+        suggested_action: suggested_action
       })
+      |> maybe_mark_session_started(update, timestamp)
       |> maybe_mark_startup_progress(progress_milestone, timestamp)
+      |> maybe_mark_agent_activity(agent_activity_milestone, timestamp)
 
     {
       updated_entry,
@@ -2923,6 +3130,154 @@ defmodule SymphonyElixir.Orchestrator do
     |> Map.put(:workspace_progress_changed_at, timestamp)
     |> Map.put(:workspace_progress_tokens, no_progress_token_total(running_entry))
   end
+
+  defp maybe_mark_session_started(running_entry, %{event: :session_started}, timestamp) do
+    running_entry
+    |> Map.put(:session_started_at, Map.get(running_entry, :session_started_at) || timestamp)
+    |> Map.put(:session_started_tokens, no_progress_token_total(running_entry))
+  end
+
+  defp maybe_mark_session_started(running_entry, _update, _timestamp), do: running_entry
+
+  defp maybe_mark_agent_activity(running_entry, nil, _timestamp), do: running_entry
+
+  defp maybe_mark_agent_activity(running_entry, {kind, summary}, timestamp) do
+    running_entry
+    |> Map.put(:agent_activity_seen, true)
+    |> Map.put(:agent_activity_kind, kind)
+    |> Map.put(:agent_activity_summary, summary)
+    |> Map.put(:agent_activity_at, timestamp)
+  end
+
+  defp update_validation_statuses(statuses, update, timestamp) when is_map(statuses) do
+    required_commands = required_validation_commands()
+
+    case matching_required_validation_command(update, required_commands) do
+      nil ->
+        {statuses, nil}
+
+      command ->
+        status = validation_command_status(update)
+
+        updated_statuses =
+          Map.put(statuses, command, %{
+            status: status,
+            observed_at: timestamp,
+            evidence: codex_event_preview(update) || truncate_event_text(validation_event_text(update))
+          })
+
+        classification =
+          if status == :failed do
+            :validation_failure_repeat
+          end
+
+        {updated_statuses, classification}
+    end
+  end
+
+  defp update_validation_statuses(_statuses, update, timestamp), do: update_validation_statuses(%{}, update, timestamp)
+
+  defp required_validation_blocker(running_entry) when is_map(running_entry) do
+    commands = required_validation_commands()
+    statuses = Map.get(running_entry, :validation_statuses, %{})
+
+    failed =
+      Enum.filter(commands, fn command ->
+        validation_command_status_for(statuses, command) == :failed
+      end)
+
+    missing =
+      Enum.filter(commands, fn command ->
+        validation_command_status_for(statuses, command) != :passed
+      end)
+
+    cond do
+      failed != [] -> {:validation_failure_repeat, failed}
+      missing != [] -> {:required_validation_missing, missing}
+      true -> nil
+    end
+  end
+
+  defp required_validation_blocker(_running_entry), do: nil
+
+  defp validation_command_status_for(statuses, command) when is_map(statuses) do
+    case Map.get(statuses, command) do
+      %{status: status} -> status
+      %{"status" => status} when is_binary(status) -> String.to_existing_atom(status)
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp required_validation_commands do
+    Config.settings!().agent.required_validation_commands
+    |> List.wrap()
+    |> Enum.map(&normalize_command_text/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp matching_required_validation_command(_update, []), do: nil
+
+  defp matching_required_validation_command(update, required_commands) do
+    text = validation_event_text(update)
+
+    Enum.find(required_commands, fn command ->
+      command != "" and String.contains?(text, command)
+    end)
+  end
+
+  defp validation_command_status(update) do
+    text = validation_event_text(update)
+
+    cond do
+      command_execution_failed_text?(text) -> :failed
+      command_execution_passed_text?(text) -> :passed
+      true -> :observed
+    end
+  end
+
+  defp command_execution_failed_text?(text) when is_binary(text) do
+    String.contains?(text, "command execution") and String.contains?(text, "failed")
+  end
+
+  defp command_execution_passed_text?(text) when is_binary(text) do
+    String.contains?(text, "command execution") and
+      String.contains?(text, ["completed", "succeeded", "passed", "exit status 0", "exit_status: 0"]) and
+      not String.contains?(text, "failed")
+  end
+
+  defp validation_event_text(update) do
+    payload = codex_update_payload(update)
+
+    [
+      update[:raw],
+      Map.get(update, :raw),
+      codex_event_preview(update),
+      codex_update_method(update),
+      codex_update_item_type(update),
+      map_at_path(payload, ["params", "command"]),
+      map_at_path(payload, [:params, :command]),
+      map_at_path(payload, ["params", "parsedCmd"]),
+      map_at_path(payload, [:params, :parsedCmd]),
+      map_at_path(payload, ["params", "title"]),
+      map_at_path(payload, [:params, :title]),
+      inspect(payload, limit: 30, printable_limit: @codex_event_preview_bytes)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map_join(" ", &to_string/1)
+    |> normalize_command_text()
+  end
+
+  defp normalize_command_text(text) when is_binary(text) do
+    text
+    |> String.downcase()
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
+
+  defp normalize_command_text(text), do: text |> to_string() |> normalize_command_text()
 
   defp codex_progress_milestone(%{event: :context_checkpoint, payload: %{summary: summary}}),
     do: {:context_checkpoint, compact_progress_summary(summary)}
@@ -2967,6 +3322,55 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp codex_progress_milestone(_method, _item_type, _update), do: nil
+
+  defp codex_agent_activity_milestone(%{event: event}) when event in [:session_started, :context_checkpoint] do
+    nil
+  end
+
+  defp codex_agent_activity_milestone(update) do
+    update
+    |> codex_update_method()
+    |> codex_agent_activity_milestone(codex_update_item_type(update), update)
+  end
+
+  defp codex_agent_activity_milestone("turn/plan/updated", _item_type, update),
+    do: {:plan_updated, codex_event_preview(update) || "plan updated"}
+
+  defp codex_agent_activity_milestone("item/plan/delta", _item_type, update),
+    do: {:plan_delta, codex_event_preview(update) || "plan streaming"}
+
+  defp codex_agent_activity_milestone("turn/diff/updated", _item_type, _update), do: {:diff_updated, "turn diff updated"}
+
+  defp codex_agent_activity_milestone("item/started", "commandExecution", update),
+    do: {:command_execution_started, codex_event_preview(update) || "commandExecution started"}
+
+  defp codex_agent_activity_milestone("item/started", "fileChange", update),
+    do: {:file_change_started, codex_event_preview(update) || "fileChange started"}
+
+  defp codex_agent_activity_milestone("item/completed", "fileChange", update),
+    do: {:file_change_completed, codex_event_preview(update) || "file change completed"}
+
+  defp codex_agent_activity_milestone("item/commandExecution/outputDelta", _item_type, update),
+    do: {:command_output, codex_event_preview(update) || "item/commandExecution/outputDelta"}
+
+  defp codex_agent_activity_milestone("item/fileChange/outputDelta", _item_type, update),
+    do: {:file_change_output, codex_event_preview(update) || "item/fileChange/outputDelta"}
+
+  defp codex_agent_activity_milestone("item/agentMessage/delta", _item_type, update) do
+    preview = codex_event_preview(update)
+    if present_text?(preview), do: {:agent_message, preview}
+  end
+
+  defp codex_agent_activity_milestone(method, _item_type, update)
+       when method in [
+              "item/reasoning/summaryTextDelta",
+              "item/reasoning/summaryPartAdded",
+              "item/reasoning/textDelta"
+            ] do
+    {:reasoning, codex_event_preview(update) || method}
+  end
+
+  defp codex_agent_activity_milestone(_method, _item_type, _update), do: nil
 
   defp update_recent_codex_events(running_entry, update) do
     recent =
@@ -3375,6 +3779,10 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp apply_codex_rate_limits(state, _update), do: state
+
+  defp apply_token_delta(codex_totals, token_delta) when not is_map(codex_totals) do
+    apply_token_delta(%{}, token_delta)
+  end
 
   defp apply_token_delta(codex_totals, token_delta) do
     input_tokens = Map.get(codex_totals, :input_tokens, 0) + token_delta.input_tokens
