@@ -190,9 +190,9 @@ outcome_projects:
       representation: metadata
       full_sync_allowed: true
       labels:
-        - repo:finance-os
+        - repo:cfo
       custom_fields:
-        github_repository: BrianSeong99/finance-os
+        github_repository: BrianSeong99/cfo
 
   - key: cmo
     name: CMO
