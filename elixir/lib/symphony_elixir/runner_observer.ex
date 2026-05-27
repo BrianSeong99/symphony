@@ -55,6 +55,10 @@ defmodule SymphonyElixir.RunnerObserver do
        "missing_linear_api_token",
        "missing auth",
        "expired credential",
+       "invalid_grant",
+       "invalid refresh token",
+       "tokenrefreshfailed",
+       "token refresh failed",
        "createpullrequest",
        "correct permissions"
      ]},
