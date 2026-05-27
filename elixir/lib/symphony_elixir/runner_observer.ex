@@ -22,6 +22,7 @@ defmodule SymphonyElixir.RunnerObserver do
           | :no_output_timeout
           | :permission_denied_loop
           | :process_exit_nonzero
+          | :required_validation_missing
           | :requirements_mismatch
           | :startup_no_progress
           | :startup_token_budget_exceeded
@@ -80,6 +81,13 @@ defmodule SymphonyElixir.RunnerObserver do
        "allow github",
        "approval prompt"
      ]},
+    {:required_validation_missing,
+     [
+       "required_validation_missing",
+       "required validation missing",
+       "required validation not satisfied",
+       "missing required validation"
+     ]},
     {:requirements_mismatch,
      [
        "requirements_mismatch",
@@ -89,7 +97,16 @@ defmodule SymphonyElixir.RunnerObserver do
        "no package.json found",
        "no package manifest found"
      ]},
-    {:validation_failure_repeat, ["validation_failure_repeat", "test failure", "mix test", "validation failed"]},
+    {:validation_failure_repeat,
+     [
+       "validation_failure_repeat",
+       "test failure",
+       "mix test",
+       "validation failed",
+       "csssyntaxerror",
+       "failed to compile",
+       "build failed"
+     ]},
     {:tool_failure_repeat, ["tool_failure_repeat", "tool_call_failed"]},
     {:external_service_failure,
      [
@@ -214,6 +231,7 @@ defmodule SymphonyElixir.RunnerObserver do
   def suggested_action(:compaction_stall), do: "Resume the same issue with a compacted workpad summary and do not start unrelated work."
   def suggested_action(:auth_failure), do: "Block until credentials are restored; do not keep retrying."
   def suggested_action(:permission_denied_loop), do: "Block and surface the denied command or approval request."
+  def suggested_action(:required_validation_missing), do: "Block the run and execute the required repo-native validation command before any PR ready or merge handoff."
   def suggested_action(:validation_failure_repeat), do: "Compare validation output with acceptance criteria and update the issue before more fixes."
   def suggested_action(:requirements_mismatch), do: "Update the issue/workpad requirements, re-plan, then continue in the same builder session."
   def suggested_action(:external_service_failure), do: "Record the dependency health evidence and retry only after the service is reachable."
@@ -364,11 +382,16 @@ defmodule SymphonyElixir.RunnerObserver do
   defp validation_failure_text?(text) when is_binary(text) do
     String.contains?(text, [
       "mix test",
+      "npm run build",
       "exunit",
       "test/",
       "1 failure",
       "2 failures",
-      "failed tests"
+      "failed tests",
+      "csssyntaxerror",
+      "failed to compile",
+      "build failed",
+      "playwright"
     ])
   end
 

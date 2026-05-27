@@ -58,6 +58,7 @@ first few days so failures are easy to read.
 The runner guardrails remain active:
 
 - `max_retry_attempts: 3`
+- `required_validation_commands` for repos that need a hard ready/merge gate
 - `startup_token_window_ms: 15000`
 - `startup_max_total_tokens: 150000`
 - `startup_progress_timeout_ms: 60000`
@@ -70,6 +71,14 @@ These budgets are runaway guards, not quality ceilings. The runner should spend
 what the task needs for good work, while classifying wasteful patterns such as
 full log ingestion, repeated broad context reads, no-progress loops, and
 validation retries that do not change the plan.
+
+For WPRC website, `npm run build` is a required validation command. Symphony
+must observe that command passing in the current run before treating the issue
+as ready, pushing a ready PR update, or merging. CSS parser failures, Next.js
+build failures, and Playwright/browser validation failures are hard blockers.
+If a session starts but never emits plan, reasoning, command, file, or message
+activity, Symphony blocks it as `startup_no_progress` instead of starting more
+empty sessions.
 
 ## Codebase Context Pilot
 

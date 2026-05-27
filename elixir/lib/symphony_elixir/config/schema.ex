@@ -225,6 +225,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:startup_progress_max_tokens, :integer, default: 0)
       field(:max_total_tokens, :integer, default: 500_000)
       field(:prompt_mode, :string, default: "workflow")
+      field(:required_validation_commands, {:array, :string}, default: [])
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -245,7 +246,8 @@ defmodule SymphonyElixir.Config.Schema do
           :startup_progress_timeout_ms,
           :startup_progress_max_tokens,
           :max_total_tokens,
-          :prompt_mode
+          :prompt_mode,
+          :required_validation_commands
         ],
         empty_values: []
       )
@@ -261,6 +263,7 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:startup_progress_max_tokens, greater_than_or_equal_to: 0)
       |> validate_number(:max_total_tokens, greater_than_or_equal_to: 0)
       |> validate_inclusion(:prompt_mode, ["workflow", "compact"])
+      |> update_change(:required_validation_commands, &Schema.normalize_string_list/1)
       |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
       |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
     end
@@ -517,7 +520,19 @@ defmodule SymphonyElixir.Config.Schema do
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
-    %{settings | tracker: tracker, workspace: workspace, context_ingestion: context_ingestion, codex: codex}
+    agent = %{
+      settings.agent
+      | required_validation_commands: normalize_string_list(settings.agent.required_validation_commands)
+    }
+
+    %{
+      settings
+      | tracker: tracker,
+        workspace: workspace,
+        context_ingestion: context_ingestion,
+        agent: agent,
+        codex: codex
+    }
   end
 
   defp normalize_keys(value) when is_map(value) do
@@ -599,7 +614,9 @@ defmodule SymphonyElixir.Config.Schema do
     Path.join([System.tmp_dir!(), "symphony_workspaces", ".symphony_context"])
   end
 
-  defp normalize_string_list(values) when is_list(values) do
+  @doc false
+  @spec normalize_string_list(term()) :: [String.t()]
+  def normalize_string_list(values) when is_list(values) do
     values
     |> Enum.map(&to_string/1)
     |> Enum.map(&String.trim/1)
@@ -607,7 +624,7 @@ defmodule SymphonyElixir.Config.Schema do
     |> Enum.uniq()
   end
 
-  defp normalize_string_list(_values), do: []
+  def normalize_string_list(_values), do: []
 
   defp normalize_string_setting(value, fallback) when is_binary(value) do
     case String.trim(value) do
