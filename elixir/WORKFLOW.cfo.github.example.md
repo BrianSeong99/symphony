@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: github
-  repository: BrianSeong99/finance-os
+  repository: BrianSeong99/cfo
   active_labels:
     - agent:symphony
   terminal_states:
@@ -39,9 +39,9 @@ workspace:
 hooks:
   after_create: |
     if git remote get-url origin >/dev/null 2>&1; then
-      git remote set-url origin git@github.com:BrianSeong99/finance-os.git
+      git remote set-url origin git@github.com:BrianSeong99/cfo.git
     else
-      git remote add origin git@github.com:BrianSeong99/finance-os.git
+      git remote add origin git@github.com:BrianSeong99/cfo.git
     fi
     git fetch origin main
   before_run: |
@@ -61,7 +61,7 @@ agent:
   max_total_tokens: 500000
   prompt_mode: compact
 codex:
-  command: SYMPHONY_GIT_BASE_REF=origin/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/finance-os SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
+  command: SYMPHONY_GIT_BASE_REF=origin/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/cfo SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:

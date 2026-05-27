@@ -37,7 +37,7 @@ process per workflow.
 | Homelab | `elixir/WORKFLOW.homelab.github.example.md` | `BrianSeong99/homelab` | `~/Develop/Labs/homelab` | `~/Develop/Labs/worktrees/symphony-homelab-github-test` |
 | WPRC website | `elixir/WORKFLOW.wprc-website.github.example.md` | `Whitepaper-Reading-Club/wprc-website` | `~/Develop/WPRC/wprc-website` | `~/Develop/Labs/worktrees/symphony-wprc-website-github-test` |
 | WPRC intelligence stack | `elixir/WORKFLOW.wprc-intelligence-stack.github.example.md` | `Whitepaper-Reading-Club/intelligence-stack` | `~/Develop/WPRC/intelligence-stack` | `~/Develop/Labs/worktrees/symphony-wprc-intelligence-stack-github-test` |
-| CFO / Finance-OS | `elixir/WORKFLOW.cfo.github.example.md` | `BrianSeong99/finance-os` | `~/Develop/Labs/Finance-OS/cfo` | `~/Develop/Labs/worktrees/symphony-cfo-github-test` |
+| CFO | `elixir/WORKFLOW.cfo.github.example.md` | `BrianSeong99/cfo` | `~/Develop/Labs/Finance-OS/cfo` | `~/Develop/Labs/worktrees/symphony-cfo-github-test` |
 | CMO / Marketing-OS | `elixir/WORKFLOW.cmo.github.example.md` | `BrianSeong99/cmo` | `~/Develop/Labs/Marketing-OS/cmo` | `~/Develop/Labs/worktrees/symphony-cmo-github-test` |
 | Omega interface | `elixir/WORKFLOW.omega-interface.github.example.md` | `TheChainlessLabs/omega-interface` | `~/Develop/Chainless/omega-interface` | `~/Develop/Labs/worktrees/symphony-omega-interface-github-test` |
 | Omega Zone | `elixir/WORKFLOW.omega-zone.github.example.md` | `TheChainlessLabs/omega-zone` | `~/Develop/Chainless/omega-zone` | `~/Develop/Labs/worktrees/symphony-omega-zone-github-test` |
