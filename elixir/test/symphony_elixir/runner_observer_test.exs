@@ -8,6 +8,10 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_failure(:bash_not_found) == :missing_tool
     assert RunnerObserver.classify_failure("stalled for 301000ms without codex activity") == :no_output_timeout
     assert RunnerObserver.classify_failure("403 forbidden from Linear") == :auth_failure
+
+    assert RunnerObserver.classify_failure("Auth(TokenRefreshFailed(\"Server returned error response: invalid_grant: Invalid refresh token\"))") ==
+             :auth_failure
+
     assert RunnerObserver.classify_failure("acceptance criteria mismatch after validation") == :requirements_mismatch
     assert RunnerObserver.classify_failure("Mix.PubSub start failed with :eperm") == :permission_denied_loop
     assert RunnerObserver.classify_failure("startup_token_budget_exceeded total_tokens=120000") == :startup_token_budget_exceeded
