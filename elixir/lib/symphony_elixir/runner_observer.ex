@@ -24,6 +24,7 @@ defmodule SymphonyElixir.RunnerObserver do
           | :process_exit_nonzero
           | :required_validation_missing
           | :requirements_mismatch
+          | :session_resume_failed
           | :startup_no_progress
           | :startup_token_budget_exceeded
           | :tool_failure_repeat
@@ -123,6 +124,7 @@ defmodule SymphonyElixir.RunnerObserver do
        "name or service not known",
        "temporary failure in name resolution"
      ]},
+    {:session_resume_failed, ["session_resume_failed", "thread_resume_failed", "thread/resume", "resume thread"]},
     {:budget_exhausted, ["budget_exhausted", "max-budget", "budget exceeded"]},
     {:max_turns_exceeded, ["max_turns_exceeded", "max turns"]},
     {:turn_failed, ["turn_failed", "turn/failed"]},
@@ -238,6 +240,7 @@ defmodule SymphonyElixir.RunnerObserver do
   def suggested_action(:required_validation_missing), do: "Block the run and execute the required repo-native validation command before any PR ready or merge handoff."
   def suggested_action(:validation_failure_repeat), do: "Compare validation output with acceptance criteria and update the issue before more fixes."
   def suggested_action(:requirements_mismatch), do: "Update the issue/workpad requirements, re-plan, then continue in the same builder session."
+  def suggested_action(:session_resume_failed), do: "Block the run, preserve the worktree and last thread id, and debug why the existing Codex thread could not be resumed."
   def suggested_action(:external_service_failure), do: "Record the dependency health evidence and retry only after the service is reachable."
   def suggested_action(:process_exit_nonzero), do: "Retry only within policy after preserving exit output and command context."
   def suggested_action(:max_retry_attempts_exceeded), do: "Stop broad rollout and diagnose the repeated failure before any further retry."

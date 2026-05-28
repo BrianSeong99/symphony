@@ -735,6 +735,41 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
+  test "active durable issue run claim prevents duplicate dispatch" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-claimed-dispatch-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      state = %Orchestrator.State{
+        max_concurrent_agents: 3,
+        running: %{},
+        claimed: MapSet.new(),
+        codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        retry_attempts: %{}
+      }
+
+      issue = %Issue{id: "115", identifier: "GH-115", title: "Already claimed", state: "Todo"}
+
+      assert {:ok, _claim} =
+               SymphonyElixir.IssueRunClaim.acquire(issue, %{
+                 codex_thread_id: "thread-115",
+                 codex_thread_name: "GH-115 Symphony Reviewer",
+                 claude_session_id: "builder:115",
+                 claude_session_name: "GH-115 Symphony Builder"
+               })
+
+      refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+    after
+      SymphonyElixir.IssueRunClaim.release("115", "test cleanup")
+      File.rm_rf(workspace_root)
+    end
+  end
+
   test "dispatch revalidation skips stale todo issue once a non-terminal blocker appears" do
     stale_issue = %Issue{
       id: "blocked-2",

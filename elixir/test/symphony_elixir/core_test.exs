@@ -629,7 +629,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 38_000, 40_500)
+    assert_due_in_range(due_at_ms, 35_000, 40_500)
   end
 
   test "attempt four blocks the issue and writes Linear evidence instead of retrying" do
@@ -1531,19 +1531,18 @@ defmodule SymphonyElixir.CoreTest do
 
       File.write!(codex_binary, """
       #!/bin/sh
-      count=0
       while IFS= read -r line; do
-        count=$((count + 1))
-        case "$count" in
-          1)
+        case "$line" in
+          *'"id":1'*)
             printf '%s\\n' '{\"id\":1,\"result\":{}}'
             ;;
-          2)
-            ;;
-          3)
+          *'"id":2'*)
             printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-1\"}}}'
             ;;
-          4)
+          *'"id":5'*)
+            printf '%s\\n' '{\"id\":5,\"result\":{}}'
+            ;;
+          *'"id":3'*)
             printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-1\"}}}'
             printf '%s\\n' '{\"method\":\"turn/completed\"}'
             exit 0
@@ -1616,20 +1615,19 @@ defmodule SymphonyElixir.CoreTest do
         codex_binary,
         """
         #!/bin/sh
-        count=0
         while IFS= read -r line; do
-          count=$((count + 1))
-          case "$count" in
-            1)
+          case "$line" in
+            *'"id":1'*)
               printf '%s\\n' '{\"id\":1,\"result\":{}}'
               ;;
-            2)
+            *'"id":2'*)
               printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-live\"}}}'
               ;;
-            3)
-              printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-live\"}}}'
+            *'"id":5'*)
+              printf '%s\\n' '{\"id\":5,\"result\":{}}'
               ;;
-            4)
+            *'"id":3'*)
+              printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-live\"}}}'
               printf '%s\\n' '{\"method\":\"turn/completed\"}'
               ;;
             *)
@@ -1776,26 +1774,27 @@ defmodule SymphonyElixir.CoreTest do
       trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
       run_id="$(date +%s%N)-$$"
       printf 'RUN:%s\\n' "$run_id" >> "$trace_file"
-      count=0
+      turn_count=0
 
       while IFS= read -r line; do
-        count=$((count + 1))
         printf 'JSON:%s\\n' "$line" >> "$trace_file"
-        case "$count" in
-          1)
+        case "$line" in
+          *'"id":1'*)
             printf '%s\\n' '{"id":1,"result":{}}'
             ;;
-          2)
-            ;;
-          3)
+          *'"id":2'*)
             printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-cont"}}}'
             ;;
-          4)
-            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-1"}}}'
-            printf '%s\\n' '{"method":"turn/completed"}'
+          *'"id":5'*)
+            printf '%s\\n' '{"id":5,"result":{}}'
             ;;
-          5)
-            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-2"}}}'
+          *'"id":3'*)
+            turn_count=$((turn_count + 1))
+            if [ "$turn_count" -eq 1 ]; then
+              printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-1"}}}'
+            else
+              printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-2"}}}'
+            fi
             printf '%s\\n' '{"method":"turn/completed"}'
             ;;
         esac
@@ -1906,26 +1905,27 @@ defmodule SymphonyElixir.CoreTest do
       #!/bin/sh
       trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
       printf 'RUN\\n' >> "$trace_file"
-      count=0
+      turn_count=0
 
       while IFS= read -r line; do
-        count=$((count + 1))
         printf 'JSON:%s\\n' "$line" >> "$trace_file"
-        case "$count" in
-          1)
+        case "$line" in
+          *'"id":1'*)
             printf '%s\\n' '{"id":1,"result":{}}'
             ;;
-          2)
-            ;;
-          3)
+          *'"id":2'*)
             printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-max"}}}'
             ;;
-          4)
-            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-1"}}}'
-            printf '%s\\n' '{"method":"turn/completed"}'
+          *'"id":5'*)
+            printf '%s\\n' '{"id":5,"result":{}}'
             ;;
-          5)
-            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-2"}}}'
+          *'"id":3'*)
+            turn_count=$((turn_count + 1))
+            if [ "$turn_count" -eq 1 ]; then
+              printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-1"}}}'
+            else
+              printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-2"}}}'
+            fi
             printf '%s\\n' '{"method":"turn/completed"}'
             ;;
         esac

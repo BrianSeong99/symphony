@@ -177,7 +177,130 @@ defmodule SymphonyElixir.AppServerTest do
                    false
                  end
                end)
+
+        assert Enum.any?(lines, fn line ->
+                 if String.starts_with?(line, "JSON:") do
+                   line
+                   |> String.trim_leading("JSON:")
+                   |> Jason.decode!()
+                   |> then(fn payload ->
+                     payload["method"] == "thread/start" &&
+                       get_in(payload, ["params", "ephemeral"]) == false
+                   end)
+                 else
+                   false
+                 end
+               end)
       end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server resumes an existing thread instead of starting a new one" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-resume-thread-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-RESUME")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-resume-thread.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        restore_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-resume-thread.trace}"
+
+      while IFS= read -r line; do
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$line" in
+          *'"id":1'*)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          *'"id":4'*)
+            printf '%s\\n' '{"id":4,"result":{"thread":{"id":"thread-existing"}}}'
+            ;;
+          *'"id":5'*)
+            printf '%s\\n' '{"id":5,"result":{}}'
+            ;;
+          *'"id":3'*)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-resumed"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-resume-thread",
+        identifier: "MT-RESUME",
+        title: "Resume existing thread",
+        description: "Ensure retry runs resume the same Codex app thread",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-RESUME",
+        labels: ["backend"]
+      }
+
+      assert {:ok, %{thread_id: "thread-existing", turn_id: "turn-resumed"}} =
+               AppServer.run(workspace, "Continue existing work", issue,
+                 resume_thread_id: "thread-existing",
+                 thread_name: "GH-115 Symphony Reviewer"
+               )
+
+      {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
+      lines = trace_file |> File.read!() |> String.split("\n", trim: true)
+
+      refute Enum.any?(lines, &String.contains?(&1, "\"method\":\"thread/start\""))
+
+      assert Enum.any?(lines, fn line ->
+               if String.starts_with?(line, "JSON:") do
+                 line
+                 |> String.trim_leading("JSON:")
+                 |> Jason.decode!()
+                 |> then(fn payload ->
+                   payload["method"] == "thread/resume" &&
+                     get_in(payload, ["params", "threadId"]) == "thread-existing" &&
+                     get_in(payload, ["params", "cwd"]) == canonical_workspace
+                 end)
+               else
+                 false
+               end
+             end)
+
+      assert Enum.any?(lines, fn line ->
+               if String.starts_with?(line, "JSON:") do
+                 line
+                 |> String.trim_leading("JSON:")
+                 |> Jason.decode!()
+                 |> then(fn payload ->
+                   payload["method"] == "thread/name/set" &&
+                     get_in(payload, ["params", "threadId"]) == "thread-existing" &&
+                     get_in(payload, ["params", "name"]) == "GH-115 Symphony Reviewer"
+                 end)
+               else
+                 false
+               end
+             end)
     after
       File.rm_rf(test_root)
     end

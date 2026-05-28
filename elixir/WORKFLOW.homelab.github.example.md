@@ -93,7 +93,7 @@ agent:
   max_total_tokens: 500000
   prompt_mode: compact
 codex:
-  command: SYMPHONY_GIT_BASE_REF=origin/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/homelab SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
+  command: SYMPHONY_GIT_BASE_REF=origin/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/homelab SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
@@ -105,6 +105,8 @@ You are working on a GitHub issue in Brian's Homelab repository.
 Follow the repo guidance first, but treat injected `AGENTS.md` and `CLAUDE.md` guidance as already loaded. Do not print or re-read full guidance files, workflow docs, package manifests, generated files, or full diffs. Public GitHub text must be under Brian's identity only, with no tool attribution.
 
 Use the current git worktree only. The branch must be based on `main`, and the PR must target `main`. Use local `git` and `gh` commands for branch, commit, push, PR, and merge work.
+
+Reuse the issue's named sessions until terminal state: `GH-### Symphony Builder` for Claude Code and `GH-### Symphony Reviewer` for Codex. Do not start a fresh chat on retry, restart, validation failure, or review feedback when an existing session/thread id exists.
 
 Avoid dependency, cache, build, coverage, and generated-artifact paths during exploration. Do not run package installs in setup. Install dependencies only after you know the validation path requires them.
 

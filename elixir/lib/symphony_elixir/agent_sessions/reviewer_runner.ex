@@ -33,6 +33,7 @@ defmodule SymphonyElixir.AgentSessions.ReviewerRunner do
       mode: mode,
       backend: session.backend,
       session_id: session.session_id,
+      session_name: session.metadata["session_name"],
       symphony_issue_id: session.symphony_issue_id,
       pr_key: pr_key,
       pr: pr

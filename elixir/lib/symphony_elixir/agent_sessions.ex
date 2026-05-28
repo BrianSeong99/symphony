@@ -23,13 +23,19 @@ defmodule SymphonyElixir.AgentSessions do
 
     case find_active_builder(sessions, issue_id) do
       nil ->
+        metadata =
+          attrs
+          |> Map.get(:metadata, %{})
+          |> Map.put_new("session_name", Map.get(attrs, :session_name, issue_session_name(issue, "Builder")))
+
         {:create,
          new_session(
            "builder",
            issue_id,
            Map.merge(attrs, %{
              backend: Map.get(attrs, :backend, "claude_code"),
-             session_id: Map.get(attrs, :session_id, "builder:#{issue_id}")
+             session_id: Map.get(attrs, :session_id, "builder:#{issue_id}"),
+             metadata: metadata
            })
          )}
 
@@ -46,6 +52,7 @@ defmodule SymphonyElixir.AgentSessions do
           attrs
           |> Map.get(:metadata, %{})
           |> Map.put("pr_key", pr_key)
+          |> Map.put_new("session_name", Map.get(attrs, :session_name, "#{pr_key} Symphony Reviewer"))
 
         {:create,
          new_session(
@@ -138,4 +145,10 @@ defmodule SymphonyElixir.AgentSessions do
 
   defp issue_id(%{id: id}), do: id
   defp issue_id(id), do: id
+
+  defp issue_session_name(%{identifier: identifier}, role) when is_binary(identifier) do
+    "#{identifier} Symphony #{role}"
+  end
+
+  defp issue_session_name(_issue, role), do: "Symphony #{role}"
 end
