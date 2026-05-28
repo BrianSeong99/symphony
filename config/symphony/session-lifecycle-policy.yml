@@ -1,0 +1,41 @@
+version: 1
+updated_on: "2026-05-28"
+
+issue_session_policy:
+  invariant: "Each tracked GitHub issue owns exactly one Claude Code builder session and one Codex reviewer session until the issue/PR is terminal."
+  builder:
+    backend: claude_code
+    role: builder
+    cardinality: one_active_per_issue
+    name_template: "{issue_identifier} Symphony Builder"
+    resume_required: true
+    archive_on:
+      - pr_merged
+      - issue_closed
+      - issue_cancelled
+  reviewer:
+    backend: codex
+    role: reviewer
+    cardinality: one_active_per_issue_or_pr
+    name_template: "{issue_identifier} Symphony Reviewer"
+    resume_required: true
+    archive_on:
+      - pr_merged
+      - pr_closed
+      - issue_closed
+      - issue_cancelled
+  forbidden:
+    - creating a fresh Codex chat on retry when a prior thread id exists
+    - creating a fresh Claude Code chat on retry when a prior builder session exists
+    - disposing builder or reviewer context before merge/terminal state
+    - retrying a resume failure by silently starting a new chat
+  required_evidence:
+    - issue id
+    - worktree path
+    - branch
+    - claude session id
+    - claude session name
+    - codex thread id
+    - codex thread name
+    - retry attempt
+    - failure classification

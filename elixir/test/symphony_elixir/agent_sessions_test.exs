@@ -33,7 +33,7 @@ defmodule SymphonyElixir.AgentSessionsTest do
     parent = self()
 
     assert {:ok, result} =
-             BuilderRunner.run(%{id: 123, title: "Build it"}, [],
+             BuilderRunner.run(%{id: 123, identifier: "GH-115", title: "Build it"}, [],
                runner: fake_runner(parent),
                workspace_path: "/tmp/symphony-123",
                branch: "brian/build-it"
@@ -43,9 +43,10 @@ defmodule SymphonyElixir.AgentSessionsTest do
     assert result.session.role == "builder"
     assert result.session.backend == "claude_code"
     assert result.session.session_id == "builder:123"
+    assert result.session.metadata["session_name"] == "GH-115 Symphony Builder"
     assert result.session.metadata["public_output_rules"] == AgentSessions.public_output_rules()
 
-    assert_receive {:ran, %{mode: :create, backend: "claude_code", base_branch: "origin/main"}}
+    assert_receive {:ran, %{mode: :create, backend: "claude_code", base_branch: "origin/main", session_name: "GH-115 Symphony Builder"}}
   end
 
   test "builder runner resumes existing session for retries, CI failures, and review feedback" do
@@ -93,6 +94,7 @@ defmodule SymphonyElixir.AgentSessionsTest do
     assert first.session.role == "reviewer"
     assert first.session.backend == "codex"
     assert first.session.metadata["pr_key"] == "BrianSeong99/symphony#31"
+    assert first.session.metadata["session_name"] == "BrianSeong99/symphony#31 Symphony Reviewer"
 
     assert {:ok, second} = ReviewerRunner.run(pr, [first.session], runner: fake_runner(parent))
     assert second.mode == :resume

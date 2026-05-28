@@ -1,0 +1,31 @@
+version: 1
+updated_on: "2026-05-27"
+
+policy:
+  default_mode: quality_first
+  weaker_model_default: forbidden
+  downgrade_requires:
+    - explicit_issue_note
+    - visible_run_log_reason
+    - retry_or_budget_context
+
+codex:
+  default_model: gpt-5.5
+  default_reasoning_effort: xhigh
+  required_command_fragments:
+    - "--config 'model=\"gpt-5.5\"'"
+    - "--config model_reasoning_effort=xhigh"
+  notes:
+    - "Do not use gpt-5.3-codex-spark for normal Symphony runner review/build sessions."
+    - "If a model is temporarily out of usage, block with evidence or use an explicit documented downgrade."
+
+claude_code:
+  default_model_alias: opus
+  default_effort: max
+  required_command_fragments:
+    - "--model opus"
+    - "--effort max"
+    - "--dangerously-skip-permissions"
+  notes:
+    - "Builder sessions should use the strongest Claude Code model alias and maximum effort."
+    - "Do not silently fall back to sonnet or lower effort for autonomous implementation."

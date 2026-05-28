@@ -61,7 +61,7 @@ agent:
   max_total_tokens: 500000
   prompt_mode: compact
 codex:
-  command: SYMPHONY_GIT_BASE_REF=origin/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=TheChainlessLabs/omega-interface SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
+  command: SYMPHONY_GIT_BASE_REF=origin/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=TheChainlessLabs/omega-interface SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
@@ -78,6 +78,11 @@ GitHub text must be under Brian's identity only, with no tool attribution.
 Use the current git worktree only. The branch must be based on `main`, and the
 PR must target `main`. Use local `git` and `gh` commands for branch, commit,
 push, PR, and merge work.
+
+Reuse the issue's named sessions until terminal state: `GH-### Symphony Builder`
+for Claude Code and `GH-### Symphony Reviewer` for Codex. Do not start a fresh
+chat on retry, restart, validation failure, or review feedback when an existing
+session/thread id exists.
 
 This is a Chainless/Omega repo. Respect the team's existing process: do not
 rewrite labels, milestones, projects, branch protection, issue templates, or

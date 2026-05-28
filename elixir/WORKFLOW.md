@@ -83,7 +83,7 @@ agent:
   max_total_tokens: 500000
   prompt_mode: compact
 codex:
-  command: SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.3-codex-spark"' --config model_reasoning_effort=low app-server
+  command: SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
@@ -193,6 +193,14 @@ Do not use GitHub connectors, app connectors, or MCP app tools for branch,
 commit, push, PR, review, or merge operations in unattended runner sessions.
 Use the local `git` and `gh` CLI from the worktree instead. Any connector
 approval prompt is a runner failure, not a human checkpoint.
+
+Each tracked GitHub issue owns one Claude Code builder session and one Codex
+reviewer session until the issue/PR reaches a terminal state. Reuse those
+sessions for retries, validation failures, review fixes, and restart recovery;
+do not create a fresh chat when an existing session/thread id is present.
+Default names are `<issue identifier> Symphony Builder` and
+`<issue identifier> Symphony Reviewer`. Archive the session record only after
+merge, close, cancel, or another terminal state.
 
 Do not use the `linear_graphql` dynamic tool during normal startup. The issue
 identifier, title, state, URL, labels, and description are already injected

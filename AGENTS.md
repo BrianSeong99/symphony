@@ -36,6 +36,20 @@ For the current trial, use the workflow examples in `elixir/`:
 Each workflow monitors one repository. Use one runner process per repository
 lane, with separate worktree roots and logs.
 
+Each GitHub issue must have exactly one durable Claude Code builder session and
+one durable Codex reviewer session until the issue/PR is terminal. Session names
+must be stable and human-readable:
+
+```text
+GH-### Symphony Builder
+GH-### Symphony Reviewer
+```
+
+Retries, restarts, validation failures, and review feedback resume those
+sessions. Starting a fresh chat for the same issue while a prior session/thread
+exists is a Symphony runner bug. Archive the session record only after merge,
+close, cancel, or another terminal state.
+
 GitHub lanes require a host-native runtime, not a container-only runtime. Before
 pickup, Symphony checks `gh auth`, `git`, `workspace.source_repo`,
 `workspace.root` writability, `codex`, Codex config home, and the

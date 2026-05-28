@@ -10,6 +10,7 @@ defmodule SymphonyElixir.Orchestrator do
   alias SymphonyElixir.{
     AgentRunner,
     Config,
+    IssueRunClaim,
     RunLog,
     RunnerObserver,
     RunnerOwnership,
@@ -268,6 +269,7 @@ defmodule SymphonyElixir.Orchestrator do
           |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
           |> put_workspace_progress_baseline(now)
 
+        update_issue_run_claim(issue_id, updated_running_entry, %{status: "running"})
         notify_dashboard()
         {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
     end
@@ -284,6 +286,7 @@ defmodule SymphonyElixir.Orchestrator do
       running_entry ->
         {updated_running_entry, token_delta} = integrate_codex_update(running_entry, update)
         maybe_log_codex_progress(issue_id, updated_running_entry, update)
+        update_issue_run_claim(issue_id, updated_running_entry, %{status: "running"})
 
         state =
           state
@@ -346,7 +349,12 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: running_entry.identifier,
           delay_type: :continuation,
           worker_host: Map.get(running_entry, :worker_host),
-          workspace_path: Map.get(running_entry, :workspace_path)
+          workspace_path: Map.get(running_entry, :workspace_path),
+          codex_thread_id: Map.get(running_entry, :codex_thread_id),
+          codex_thread_name: Map.get(running_entry, :codex_thread_name),
+          claude_session_id: Map.get(running_entry, :claude_session_id),
+          claude_session_name: Map.get(running_entry, :claude_session_name),
+          session_id: running_entry_session_id(running_entry)
         })
     end
   end
@@ -438,7 +446,12 @@ defmodule SymphonyElixir.Orchestrator do
       equivalent_attempt: equivalent_attempt_from_running(running_entry, failure_fingerprint),
       suggested_action: RunnerObserver.suggested_action(classification),
       worker_host: Map.get(running_entry, :worker_host),
-      workspace_path: Map.get(running_entry, :workspace_path)
+      workspace_path: Map.get(running_entry, :workspace_path),
+      codex_thread_id: Map.get(running_entry, :codex_thread_id),
+      codex_thread_name: Map.get(running_entry, :codex_thread_name),
+      claude_session_id: Map.get(running_entry, :claude_session_id),
+      claude_session_name: Map.get(running_entry, :claude_session_name),
+      session_id: running_entry_session_id(running_entry)
     })
   end
 
@@ -959,7 +972,9 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp workspace_branch(_workspace), do: nil
 
-  defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace) do
+  defp terminate_running_issue(state, issue_id, cleanup_workspace, release_claim \\ true)
+
+  defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace, release_claim) do
     case Map.get(state.running, issue_id) do
       nil ->
         release_issue_claim(state, issue_id)
@@ -973,6 +988,7 @@ defmodule SymphonyElixir.Orchestrator do
         end
 
         stop_running_task(pid, ref)
+        if release_claim, do: IssueRunClaim.release(issue_id)
 
         %{
           state
@@ -1627,14 +1643,21 @@ defmodule SymphonyElixir.Orchestrator do
         failure_fingerprint = RunnerObserver.failure_fingerprint(stable_reason, classification)
 
         state
-        |> terminate_running_issue(issue_id, false)
+        |> terminate_running_issue(issue_id, false, false)
         |> schedule_issue_retry(issue_id, next_attempt, %{
           identifier: identifier,
           error: "stalled for #{elapsed_ms}ms without codex activity",
           classification: classification,
           failure_fingerprint: failure_fingerprint,
           suggested_action: RunnerObserver.suggested_action(classification),
-          equivalent_attempt: equivalent_attempt_from_running(running_entry, failure_fingerprint)
+          equivalent_attempt: equivalent_attempt_from_running(running_entry, failure_fingerprint),
+          worker_host: Map.get(running_entry, :worker_host),
+          workspace_path: Map.get(running_entry, :workspace_path),
+          codex_thread_id: Map.get(running_entry, :codex_thread_id),
+          codex_thread_name: Map.get(running_entry, :codex_thread_name),
+          claude_session_id: Map.get(running_entry, :claude_session_id),
+          claude_session_name: Map.get(running_entry, :claude_session_name),
+          session_id: running_entry_session_id(running_entry)
         })
       end
     else
@@ -1792,6 +1815,10 @@ defmodule SymphonyElixir.Orchestrator do
       issue: Map.get(running_entry, :issue),
       worker_host: Map.get(running_entry, :worker_host),
       workspace_path: Map.get(running_entry, :workspace_path),
+      codex_thread_id: Map.get(running_entry, :codex_thread_id),
+      codex_thread_name: Map.get(running_entry, :codex_thread_name),
+      claude_session_id: Map.get(running_entry, :claude_session_id),
+      claude_session_name: Map.get(running_entry, :claude_session_name),
       session_id: running_entry_session_id(running_entry),
       error: error,
       blocked_at: DateTime.utc_now(),
@@ -1821,6 +1848,7 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     blocked_entry = write_blocked_run_log(blocked_entry)
+    update_blocked_issue_run_claim(issue_id, blocked_entry)
 
     %{
       state
@@ -1877,6 +1905,7 @@ defmodule SymphonyElixir.Orchestrator do
       !MapSet.member?(claimed, issue.id) and
       !Map.has_key?(running, issue.id) and
       !Map.has_key?(blocked, issue.id) and
+      !IssueRunClaim.active_claim?(issue.id) and
       available_slots(state) > 0 and
       state_slots_available?(issue, running) and
       worker_slots_available?(state)
@@ -2008,17 +2037,31 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host, retry_metadata) do
-    with :ok <-
+    codex_thread_name = codex_session_name(issue)
+    claude_session_name = claude_session_name(issue)
+
+    with {:ok, claim} <- acquire_issue_run_claim(issue, attempt, worker_host, retry_metadata),
+         :ok <-
            log_run_event(issue, :"build.started", %{
              role: :builder,
              attempt: run_attempt_number(attempt),
              worker_host: worker_host || "local",
              command_policy: "configured codex command",
+             codex_thread_id: Map.get(claim, "resume_thread_id") || Map.get(claim, "codex_thread_id"),
+             codex_thread_name: codex_thread_name,
+             claude_session_id: Map.get(claim, "claude_session_id"),
+             claude_session_name: claude_session_name,
+             resumed_session: is_binary(Map.get(claim, "resume_thread_id")),
              started_at: DateTime.utc_now()
            }),
          {:ok, pid} <-
            Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-             AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+             AgentRunner.run(issue, recipient,
+               attempt: attempt,
+               worker_host: worker_host,
+               resume_thread_id: Map.get(claim, "resume_thread_id"),
+               thread_name: codex_thread_name
+             )
            end) do
       ref = Process.monitor(pid)
 
@@ -2032,6 +2075,12 @@ defmodule SymphonyElixir.Orchestrator do
           issue: issue,
           worker_host: worker_host,
           workspace_path: nil,
+          claim_path: Map.get(claim, "claim_path"),
+          claim_owner_id: Map.get(claim, "owner_id"),
+          codex_thread_id: Map.get(claim, "resume_thread_id") || Map.get(claim, "codex_thread_id"),
+          codex_thread_name: codex_thread_name,
+          claude_session_id: Map.get(claim, "claude_session_id"),
+          claude_session_name: claude_session_name,
           session_id: nil,
           last_codex_message: nil,
           last_codex_timestamp: nil,
@@ -2075,7 +2124,20 @@ defmodule SymphonyElixir.Orchestrator do
           retry_attempts: Map.delete(state.retry_attempts, issue.id)
       }
     else
+      {:error, {:already_claimed, claim}} ->
+        Logger.warning(
+          "Skipping duplicate dispatch for #{issue_context(issue)}; active claim owner=#{claim["owner_id"] || "unknown"} " <>
+            "session_id=#{claim["session_id"] || "n/a"} thread_id=#{claim["codex_thread_id"] || "n/a"}"
+        )
+
+        state
+
       {:error, {:linear_writeback_failed, reason}} ->
+        IssueRunClaim.update(issue.id, %{
+          status: "retrying",
+          error: "linear writeback failed before build start: #{inspect(reason)}"
+        })
+
         handle_build_start_writeback_failure(state, issue, attempt, retry_metadata, worker_host, reason)
 
       {:error, reason} ->
@@ -2091,9 +2153,25 @@ defmodule SymphonyElixir.Orchestrator do
           failure_fingerprint: failure_fingerprint,
           suggested_action: RunnerObserver.suggested_action(classification),
           equivalent_attempt: equivalent_attempt_from_retry_metadata(retry_metadata, failure_fingerprint),
-          worker_host: worker_host
+          worker_host: worker_host,
+          codex_thread_id: retry_metadata[:codex_thread_id],
+          session_id: retry_metadata[:session_id]
         })
     end
+  end
+
+  defp acquire_issue_run_claim(issue, attempt, worker_host, retry_metadata) do
+    IssueRunClaim.acquire(issue, %{
+      attempt: run_attempt_number(attempt),
+      worker_host: worker_host || "local",
+      workspace_path: retry_metadata[:workspace_path],
+      codex_thread_id: retry_metadata[:codex_thread_id],
+      codex_thread_name: codex_session_name(issue),
+      claude_session_id: retry_metadata[:claude_session_id] || "builder:#{issue.id}",
+      claude_session_name: claude_session_name(issue),
+      session_id: retry_metadata[:session_id],
+      status: "dispatching"
+    })
   end
 
   defp dispatch_retry_metadata(metadata) when is_map(metadata), do: metadata
@@ -2170,6 +2248,11 @@ defmodule SymphonyElixir.Orchestrator do
     error = pick_retry_error(previous_retry, metadata)
     worker_host = pick_retry_worker_host(previous_retry, metadata)
     workspace_path = pick_retry_workspace_path(previous_retry, metadata)
+    codex_thread_id = pick_retry_codex_thread_id(previous_retry, metadata)
+    codex_thread_name = pick_retry_codex_thread_name(previous_retry, metadata)
+    claude_session_id = pick_retry_claude_session_id(previous_retry, metadata)
+    claude_session_name = pick_retry_claude_session_name(previous_retry, metadata)
+    session_id = pick_retry_session_id(previous_retry, metadata)
     classification = pick_retry_classification(previous_retry, metadata, error)
     failure_fingerprint = pick_retry_failure_fingerprint(previous_retry, metadata, error, classification)
     suggested_action = pick_retry_suggested_action(previous_retry, metadata, classification)
@@ -2188,12 +2271,18 @@ defmodule SymphonyElixir.Orchestrator do
       error: error,
       worker_host: worker_host,
       workspace_path: workspace_path,
+      codex_thread_id: codex_thread_id,
+      codex_thread_name: codex_thread_name,
+      claude_session_id: claude_session_id,
+      claude_session_name: claude_session_name,
+      session_id: session_id,
       classification: classification,
       failure_fingerprint: failure_fingerprint,
       suggested_action: suggested_action,
       equivalent_attempt: equivalent_attempt
     }
 
+    update_retrying_issue_run_claim(issue_id, retry_entry)
     retry_limit_exceeded? = retry_limit_exceeded?(equivalent_attempt, max_attempts, failure_fingerprint)
 
     schedule_or_block_retry(
@@ -2305,6 +2394,8 @@ defmodule SymphonyElixir.Orchestrator do
           error: Map.get(retry_entry, :error),
           worker_host: Map.get(retry_entry, :worker_host),
           workspace_path: Map.get(retry_entry, :workspace_path),
+          codex_thread_id: Map.get(retry_entry, :codex_thread_id),
+          session_id: Map.get(retry_entry, :session_id),
           classification: Map.get(retry_entry, :classification),
           failure_fingerprint: Map.get(retry_entry, :failure_fingerprint),
           suggested_action: Map.get(retry_entry, :suggested_action),
@@ -2423,6 +2514,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp release_issue_claim(%State{} = state, issue_id) do
+    IssueRunClaim.release(issue_id)
+
     %{
       state
       | claimed: MapSet.delete(state.claimed, issue_id),
@@ -2501,6 +2594,26 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp pick_retry_workspace_path(previous_retry, metadata) do
     metadata[:workspace_path] || Map.get(previous_retry, :workspace_path)
+  end
+
+  defp pick_retry_codex_thread_id(previous_retry, metadata) do
+    metadata[:codex_thread_id] || Map.get(previous_retry, :codex_thread_id)
+  end
+
+  defp pick_retry_codex_thread_name(previous_retry, metadata) do
+    metadata[:codex_thread_name] || Map.get(previous_retry, :codex_thread_name)
+  end
+
+  defp pick_retry_claude_session_id(previous_retry, metadata) do
+    metadata[:claude_session_id] || Map.get(previous_retry, :claude_session_id)
+  end
+
+  defp pick_retry_claude_session_name(previous_retry, metadata) do
+    metadata[:claude_session_name] || Map.get(previous_retry, :claude_session_name)
+  end
+
+  defp pick_retry_session_id(previous_retry, metadata) do
+    metadata[:session_id] || Map.get(previous_retry, :session_id)
   end
 
   defp pick_retry_classification(previous_retry, metadata, error) do
@@ -2587,6 +2700,7 @@ defmodule SymphonyElixir.Orchestrator do
               :auth_failure,
               :permission_denied_loop,
               :required_validation_missing,
+              :session_resume_failed,
               :validation_failure_repeat
             ],
        do: true
@@ -2603,6 +2717,10 @@ defmodule SymphonyElixir.Orchestrator do
       issue: metadata[:issue],
       worker_host: metadata[:worker_host],
       workspace_path: metadata[:workspace_path],
+      codex_thread_id: metadata[:codex_thread_id],
+      codex_thread_name: metadata[:codex_thread_name],
+      claude_session_id: metadata[:claude_session_id],
+      claude_session_name: metadata[:claude_session_name],
       session_id: metadata[:session_id],
       error: metadata[:error],
       blocked_at: DateTime.utc_now(),
@@ -2618,6 +2736,7 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     blocked_entry = write_blocked_run_log(blocked_entry)
+    update_blocked_issue_run_claim(issue_id, blocked_entry)
 
     %{
       state
@@ -2679,6 +2798,76 @@ defmodule SymphonyElixir.Orchestrator do
       {:error, reason} -> {:error, {:linear_writeback_failed, reason}}
     end
   end
+
+  defp update_issue_run_claim(issue_id, running_entry, attrs)
+       when is_binary(issue_id) and is_map(running_entry) and is_map(attrs) do
+    session_id = running_entry_session_id(running_entry)
+
+    IssueRunClaim.update(
+      issue_id,
+      Map.merge(attrs, %{
+        workspace_path: Map.get(running_entry, :workspace_path),
+        codex_thread_id: Map.get(running_entry, :codex_thread_id),
+        codex_thread_name: Map.get(running_entry, :codex_thread_name),
+        claude_session_id: Map.get(running_entry, :claude_session_id),
+        claude_session_name: Map.get(running_entry, :claude_session_name),
+        session_id: if(session_id == "n/a", do: nil, else: session_id),
+        last_codex_event: Map.get(running_entry, :last_codex_event),
+        last_codex_timestamp: Map.get(running_entry, :last_codex_timestamp),
+        updated_at: DateTime.utc_now()
+      })
+    )
+
+    :ok
+  end
+
+  defp update_issue_run_claim(_issue_id, _running_entry, _attrs), do: :ok
+
+  defp update_retrying_issue_run_claim(issue_id, retry_entry)
+       when is_binary(issue_id) and is_map(retry_entry) do
+    IssueRunClaim.update(issue_id, %{
+      status: "retrying",
+      retry_attempt: retry_entry[:attempt],
+      equivalent_attempt: retry_entry[:equivalent_attempt],
+      codex_thread_id: retry_entry[:codex_thread_id],
+      codex_thread_name: retry_entry[:codex_thread_name],
+      claude_session_id: retry_entry[:claude_session_id],
+      claude_session_name: retry_entry[:claude_session_name],
+      session_id: retry_entry[:session_id],
+      workspace_path: retry_entry[:workspace_path],
+      classification: retry_entry[:classification],
+      failure_fingerprint: retry_entry[:failure_fingerprint],
+      error: retry_entry[:error],
+      retry_due_at_ms: retry_entry[:due_at_ms],
+      updated_at: DateTime.utc_now()
+    })
+
+    :ok
+  end
+
+  defp update_retrying_issue_run_claim(_issue_id, _retry_entry), do: :ok
+
+  defp update_blocked_issue_run_claim(issue_id, blocked_entry)
+       when is_binary(issue_id) and is_map(blocked_entry) do
+    IssueRunClaim.update(issue_id, %{
+      status: "blocked",
+      workspace_path: blocked_entry[:workspace_path],
+      codex_thread_id: blocked_entry[:codex_thread_id],
+      codex_thread_name: blocked_entry[:codex_thread_name],
+      claude_session_id: blocked_entry[:claude_session_id],
+      claude_session_name: blocked_entry[:claude_session_name],
+      session_id: blocked_entry[:session_id],
+      classification: blocked_entry[:classification],
+      failure_fingerprint: blocked_entry[:failure_fingerprint],
+      error: blocked_entry[:error],
+      blocked_at: blocked_entry[:blocked_at],
+      updated_at: DateTime.utc_now()
+    })
+
+    :ok
+  end
+
+  defp update_blocked_issue_run_claim(_issue_id, _blocked_entry), do: :ok
 
   defp maybe_put_runtime_value(running_entry, _key, nil), do: running_entry
 
@@ -2774,6 +2963,15 @@ defmodule SymphonyElixir.Orchestrator do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
 
+  defp codex_session_name(%Issue{} = issue), do: named_issue_session(issue, "Reviewer")
+  defp claude_session_name(%Issue{} = issue), do: named_issue_session(issue, "Builder")
+
+  defp named_issue_session(%Issue{identifier: identifier}, role) when is_binary(identifier) do
+    "#{identifier} Symphony #{role}"
+  end
+
+  defp named_issue_session(_issue, role), do: "Symphony #{role}"
+
   defp available_slots(%State{} = state) do
     max(
       (state.max_concurrent_agents || Config.settings!().agent.max_concurrent_agents) -
@@ -2843,6 +3041,10 @@ defmodule SymphonyElixir.Orchestrator do
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
           branch: workspace_branch(Map.get(metadata, :workspace_path)),
+          codex_thread_id: Map.get(metadata, :codex_thread_id),
+          codex_thread_name: Map.get(metadata, :codex_thread_name),
+          claude_session_id: Map.get(metadata, :claude_session_id),
+          claude_session_name: Map.get(metadata, :claude_session_name),
           session_id: metadata.session_id,
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
@@ -2887,6 +3089,11 @@ defmodule SymphonyElixir.Orchestrator do
           suggested_action: Map.get(retry, :suggested_action),
           worker_host: Map.get(retry, :worker_host),
           workspace_path: Map.get(retry, :workspace_path),
+          codex_thread_id: Map.get(retry, :codex_thread_id),
+          codex_thread_name: Map.get(retry, :codex_thread_name),
+          claude_session_id: Map.get(retry, :claude_session_id),
+          claude_session_name: Map.get(retry, :claude_session_name),
+          session_id: Map.get(retry, :session_id),
           branch: workspace_branch(Map.get(retry, :workspace_path))
         }
       end)
@@ -2900,6 +3107,10 @@ defmodule SymphonyElixir.Orchestrator do
           state: blocked_issue_state(metadata),
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
+          codex_thread_id: Map.get(metadata, :codex_thread_id),
+          codex_thread_name: Map.get(metadata, :codex_thread_name),
+          claude_session_id: Map.get(metadata, :claude_session_id),
+          claude_session_name: Map.get(metadata, :claude_session_name),
           session_id: Map.get(metadata, :session_id),
           error: Map.get(metadata, :error),
           classification: Map.get(metadata, :classification),
@@ -3091,6 +3302,7 @@ defmodule SymphonyElixir.Orchestrator do
         last_codex_timestamp: timestamp,
         last_codex_message: summarize_codex_update(update),
         recent_codex_events: update_recent_codex_events(running_entry, update),
+        codex_thread_id: codex_thread_id_for_update(Map.get(running_entry, :codex_thread_id), update),
         session_id: session_id_for_update(running_entry.session_id, update),
         last_codex_event: event,
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
@@ -3541,6 +3753,10 @@ defmodule SymphonyElixir.Orchestrator do
       identifier: running_entry.identifier,
       role: :builder,
       session_id: Map.get(update, :session_id),
+      codex_thread_id: Map.get(running_entry, :codex_thread_id),
+      codex_thread_name: Map.get(running_entry, :codex_thread_name),
+      claude_session_id: Map.get(running_entry, :claude_session_id),
+      claude_session_name: Map.get(running_entry, :claude_session_name),
       pid: Map.get(running_entry, :codex_app_server_pid),
       worktree: Map.get(running_entry, :workspace_path),
       last_event: :session_started,
@@ -3555,6 +3771,10 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: running_entry.identifier,
           role: :builder,
           session_id: Map.get(running_entry, :session_id),
+          codex_thread_id: Map.get(running_entry, :codex_thread_id),
+          codex_thread_name: Map.get(running_entry, :codex_thread_name),
+          claude_session_id: Map.get(running_entry, :claude_session_id),
+          claude_session_name: Map.get(running_entry, :claude_session_name),
           pid: Map.get(running_entry, :codex_app_server_pid),
           worktree: Map.get(running_entry, :workspace_path),
           last_event: event,
@@ -3573,6 +3793,10 @@ defmodule SymphonyElixir.Orchestrator do
               identifier: running_entry.identifier,
               role: :builder,
               session_id: Map.get(running_entry, :session_id),
+              codex_thread_id: Map.get(running_entry, :codex_thread_id),
+              codex_thread_name: Map.get(running_entry, :codex_thread_name),
+              claude_session_id: Map.get(running_entry, :claude_session_id),
+              claude_session_name: Map.get(running_entry, :claude_session_name),
               pid: Map.get(running_entry, :codex_app_server_pid),
               worktree: Map.get(running_entry, :workspace_path),
               last_event: event,
@@ -3604,6 +3828,11 @@ defmodule SymphonyElixir.Orchestrator do
     do: to_string(pid)
 
   defp codex_app_server_pid_for_update(existing, _update), do: existing
+
+  defp codex_thread_id_for_update(_existing, %{thread_id: thread_id}) when is_binary(thread_id),
+    do: thread_id
+
+  defp codex_thread_id_for_update(existing, _update), do: existing
 
   defp session_id_for_update(_existing, %{session_id: session_id}) when is_binary(session_id),
     do: session_id

@@ -80,6 +80,12 @@ If a session starts but never emits plan, reasoning, command, file, or message
 activity, Symphony blocks it as `startup_no_progress` instead of starting more
 empty sessions.
 
+Session lifecycle is issue-scoped. Each GitHub issue gets one Claude Code
+builder session named `GH-### Symphony Builder` and one Codex reviewer session
+named `GH-### Symphony Reviewer`. Retries, restarts, validation failures, and
+review feedback must resume those sessions. A restart that creates a new chat
+for the same GitHub issue is a runner failure, not normal retry behavior.
+
 ## Codebase Context Pilot
 
 Homelab is the first repo with bounded codebase context ingestion enabled. The
@@ -131,6 +137,7 @@ with:
 
 - issue identifier and repository
 - worktree path and branch
+- Claude builder session id/name and Codex reviewer thread id/name
 - run start and finish timestamps
 - retry count and failure classifier when blocked
 - validation commands and results

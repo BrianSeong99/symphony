@@ -9,6 +9,8 @@ defmodule SymphonyElixir.Codex.AppServer do
   @initialize_id 1
   @thread_start_id 2
   @turn_start_id 3
+  @thread_resume_id 4
+  @thread_name_set_id 5
   @port_line_bytes 1_048_576
   @max_stream_log_bytes 1_000
   @non_interactive_tool_input_answer "This is a non-interactive session. Operator input is unavailable."
@@ -39,13 +41,16 @@ defmodule SymphonyElixir.Codex.AppServer do
   @spec start_session(Path.t(), keyword()) :: {:ok, session()} | {:error, term()}
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
+    resume_thread_id = Keyword.get(opts, :resume_thread_id)
+    thread_name = Keyword.get(opts, :thread_name)
 
     with {:ok, expanded_workspace} <- validate_workspace_cwd(workspace, worker_host),
          {:ok, port} <- start_port(expanded_workspace, worker_host) do
       metadata = port_metadata(port, worker_host)
 
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
-           {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies) do
+           {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies, resume_thread_id),
+           :ok <- maybe_set_thread_name(port, thread_id, thread_name) do
         {:ok,
          %{
            port: port,
@@ -417,11 +422,23 @@ defmodule SymphonyElixir.Codex.AppServer do
     Config.codex_runtime_settings(workspace, remote: true)
   end
 
-  defp do_start_session(port, workspace, session_policies) do
+  defp do_start_session(port, workspace, session_policies, resume_thread_id) do
     case send_initialize(port) do
-      :ok -> start_thread(port, workspace, session_policies)
+      :ok -> start_or_resume_thread(port, workspace, session_policies, resume_thread_id)
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp start_or_resume_thread(port, workspace, session_policies, resume_thread_id)
+       when is_binary(resume_thread_id) and resume_thread_id != "" do
+    case resume_thread(port, workspace, session_policies, resume_thread_id) do
+      {:ok, thread_id} -> {:ok, thread_id}
+      {:error, reason} -> {:error, {:session_resume_failed, resume_thread_id, reason}}
+    end
+  end
+
+  defp start_or_resume_thread(port, workspace, session_policies, _resume_thread_id) do
+    start_thread(port, workspace, session_policies)
   end
 
   defp start_thread(port, workspace, %{approval_policy: approval_policy, thread_sandbox: thread_sandbox}) do
@@ -432,6 +449,7 @@ defmodule SymphonyElixir.Codex.AppServer do
         "approvalPolicy" => approval_policy,
         "sandbox" => thread_sandbox,
         "cwd" => workspace,
+        "ephemeral" => false,
         "dynamicTools" => DynamicTool.tool_specs()
       }
     })
@@ -445,6 +463,58 @@ defmodule SymphonyElixir.Codex.AppServer do
 
       other ->
         other
+    end
+  end
+
+  defp resume_thread(port, workspace, %{approval_policy: approval_policy, thread_sandbox: thread_sandbox}, thread_id) do
+    send_message(port, %{
+      "method" => "thread/resume",
+      "id" => @thread_resume_id,
+      "params" => %{
+        "threadId" => thread_id,
+        "approvalPolicy" => approval_policy,
+        "sandbox" => thread_sandbox,
+        "cwd" => workspace
+      }
+    })
+
+    case await_response(port, @thread_resume_id) do
+      {:ok, %{"thread" => thread_payload}} ->
+        case thread_payload do
+          %{"id" => resumed_thread_id} -> {:ok, resumed_thread_id}
+          _ -> {:error, {:invalid_thread_payload, thread_payload}}
+        end
+
+      other ->
+        other
+    end
+  end
+
+  defp maybe_set_thread_name(_port, _thread_id, thread_name)
+       when not is_binary(thread_name) or thread_name == "",
+       do: :ok
+
+  defp maybe_set_thread_name(port, thread_id, thread_name) do
+    send_message(port, %{
+      "method" => "thread/name/set",
+      "id" => @thread_name_set_id,
+      "params" => %{
+        "threadId" => thread_id,
+        "name" => thread_name
+      }
+    })
+
+    case await_response(port, @thread_name_set_id) do
+      {:ok, _response} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Unable to name Codex thread thread_id=#{thread_id}: #{inspect(reason)}")
+        :ok
+
+      other ->
+        Logger.warning("Unexpected Codex thread name response thread_id=#{thread_id}: #{inspect(other)}")
+        :ok
     end
   end
 

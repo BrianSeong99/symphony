@@ -100,8 +100,15 @@ defmodule SymphonyElixir.AgentRunner do
   defp run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host) do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
+    resume_thread_id = Keyword.get(opts, :resume_thread_id)
+    thread_name = Keyword.get(opts, :thread_name) || session_name(issue, "Reviewer")
 
-    with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
+    with {:ok, session} <-
+           AppServer.start_session(workspace,
+             worker_host: worker_host,
+             resume_thread_id: resume_thread_id,
+             thread_name: thread_name
+           ) do
       try do
         do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
       after
@@ -183,6 +190,12 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp continue_with_issue?(issue, _issue_state_fetcher), do: {:done, issue}
+
+  defp session_name(%Issue{identifier: identifier}, role) when is_binary(identifier) and is_binary(role) do
+    "#{identifier} Symphony #{role}"
+  end
+
+  defp session_name(_issue, role), do: "Symphony #{role}"
 
   defp active_issue_state?(state_name) when is_binary(state_name) do
     normalized_state = normalize_issue_state(state_name)
