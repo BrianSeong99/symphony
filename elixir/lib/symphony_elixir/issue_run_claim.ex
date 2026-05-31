@@ -11,6 +11,7 @@ defmodule SymphonyElixir.IssueRunClaim do
 
   alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.ProcessTree
 
   @owner_file "claim.json"
 
@@ -128,6 +129,7 @@ defmodule SymphonyElixir.IssueRunClaim do
         previous_session_id = claim_value(existing, "session_id")
         previous_workspace_path = claim_value(existing, "workspace_path")
 
+        cleanup_stale_owner_processes(existing)
         File.rm_rf(path)
 
         attrs =
@@ -204,6 +206,16 @@ defmodule SymphonyElixir.IssueRunClaim do
   end
 
   defp live_owner?(_claim), do: false
+
+  defp cleanup_stale_owner_processes(claim) when is_map(claim) do
+    if claim_value(claim, "host") == host() do
+      claim
+      |> claim_value("codex_app_server_pid")
+      |> ProcessTree.terminate()
+    end
+  end
+
+  defp cleanup_stale_owner_processes(_claim), do: :ok
 
   defp live_beam_pid?(beam_pid) when is_binary(beam_pid) do
     beam_pid

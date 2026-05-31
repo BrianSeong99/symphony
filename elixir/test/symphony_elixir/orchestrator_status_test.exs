@@ -101,6 +101,77 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
            }
   end
 
+  test "orchestrator previews Codex content maps without crashing" do
+    issue_id = "issue-content-map-preview"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "GH-115",
+      title: "Preview map content",
+      description: "Codex item content can contain maps",
+      state: "Todo",
+      url: "https://example.org/issues/GH-115"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :ContentMapPreviewOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      recent_codex_events: [],
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      %{
+        event: :notification,
+        timestamp: DateTime.utc_now(),
+        payload: %{
+          method: "item/started",
+          params: %{
+            item: %{
+              type: "agentMessage",
+              content: [
+                %{"type" => "text", "text" => "You are running a Symphony-managed repository task.", "text_elements" => []}
+              ]
+            }
+          }
+        }
+      }
+    })
+
+    Process.sleep(50)
+    assert Process.alive?(pid)
+
+    [recent_event | _] = :sys.get_state(pid).running[issue_id].recent_codex_events
+    assert recent_event.method == "item/started"
+    assert recent_event.text =~ "Symphony-managed repository task"
+  end
+
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do
     issue_id = "issue-usage-snapshot"
 
