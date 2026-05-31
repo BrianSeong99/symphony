@@ -8,6 +8,7 @@ defmodule SymphonyElixir.RunnerObserverTest do
     assert RunnerObserver.classify_failure(:bash_not_found) == :missing_tool
     assert RunnerObserver.classify_failure("stalled for 301000ms without codex activity") == :no_output_timeout
     assert RunnerObserver.classify_failure("403 forbidden from Linear") == :auth_failure
+    assert RunnerObserver.classify_failure("contextWindowExceeded: clear earlier history") == :context_window_exceeded
 
     assert RunnerObserver.classify_failure("Auth(TokenRefreshFailed(\"Server returned error response: invalid_grant: Invalid refresh token\"))") ==
              :auth_failure
@@ -137,6 +138,18 @@ defmodule SymphonyElixir.RunnerObserverTest do
 
     assert RunnerObserver.classify_event(:turn_ended_with_error, %{reason: "no_progress_budget_exceeded"}) ==
              :no_progress_budget_exceeded
+
+    assert RunnerObserver.classify_event(:turn_failed, %{
+             details: %{
+               "turn" => %{
+                 "status" => "failed",
+                 "error" => %{
+                   "codexErrorInfo" => "contextWindowExceeded",
+                   "message" => "Codex ran out of room in the model's context window. Start a new thread or clear earlier history."
+                 }
+               }
+             }
+           }) == :context_window_exceeded
   end
 
   test "preflight reports missing command tools with deterministic evidence" do

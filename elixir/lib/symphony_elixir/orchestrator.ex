@@ -35,6 +35,7 @@ defmodule SymphonyElixir.Orchestrator do
   @normal_completion_blocking_classifications MapSet.new([
                                                 :auth_failure,
                                                 :budget_exhausted,
+                                                :context_window_exceeded,
                                                 :external_service_failure,
                                                 :max_retry_attempts_exceeded,
                                                 :max_turns_exceeded,
@@ -2728,6 +2729,7 @@ defmodule SymphonyElixir.Orchestrator do
        when classification in [
               :missing_tool,
               :auth_failure,
+              :context_window_exceeded,
               :permission_denied_loop,
               :required_validation_missing,
               :session_resume_failed,

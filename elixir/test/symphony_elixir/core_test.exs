@@ -1818,6 +1818,73 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
+  test "app server treats failed turn completed payloads as failed turns" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-failed-completed-turn-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "issue")
+      codex_binary = Path.join(test_root, "fake-codex")
+
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      while IFS= read -r line; do
+        case "$line" in
+          *'"id":1'*)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          *'"id":2'*)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-context-window"}}}'
+            ;;
+          *'"id":3'*)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-context-window"}}}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"threadId":"thread-context-window","turn":{"id":"turn-context-window","status":"failed","error":{"codexErrorInfo":"contextWindowExceeded","message":"Codex ran out of room in the model context window."}}}}'
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-context-window",
+        identifier: "GH-CONTEXT",
+        title: "Context window",
+        description: "Context window failure",
+        state: "Todo",
+        url: "https://example.org/issues/GH-CONTEXT"
+      }
+
+      assert {:ok, session} = AppServer.start_session(workspace)
+
+      try do
+        assert {:error,
+                {:turn_failed,
+                 %{
+                   "turn" => %{
+                     "status" => "failed",
+                     "error" => %{"codexErrorInfo" => "contextWindowExceeded"}
+                   }
+                 }}} = AppServer.run_turn(session, "test prompt", issue)
+      after
+        AppServer.stop_session(session)
+      end
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "agent runner surfaces ssh startup failures instead of silently hopping hosts" do
     test_root =
       Path.join(

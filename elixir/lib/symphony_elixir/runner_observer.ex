@@ -12,6 +12,7 @@ defmodule SymphonyElixir.RunnerObserver do
           | :auth_failure
           | :budget_exhausted
           | :compaction_stall
+          | :context_window_exceeded
           | :external_service_failure
           | :internal_error
           | :max_retry_attempts_exceeded
@@ -66,6 +67,14 @@ defmodule SymphonyElixir.RunnerObserver do
     {:api_retries_exhausted, ["api_retries_exhausted", "retries exhausted"]},
     {:internal_error, ["internal_error", "internal error"]},
     {:compaction_stall, ["compaction_stall", "no_output_after_compaction", "precompact", "postcompact", "compaction"]},
+    {:context_window_exceeded,
+     [
+       "contextwindowexceeded",
+       "context window exceeded",
+       "context window",
+       "ran out of room in the model",
+       "clear earlier history"
+     ]},
     {:no_json_event_timeout, ["malformed json", "invalid json", "no_json_event_timeout", "json event timeout", "no json event"]},
     {:no_output_timeout, ["turn_timeout", "response_timeout", "stalled", "no output", "without codex activity"]},
     {:no_progress_budget_exceeded, ["no_progress_budget_exceeded", "no progress budget", "no git progress"]},
@@ -235,6 +244,10 @@ defmodule SymphonyElixir.RunnerObserver do
   def suggested_action(:no_output_timeout), do: "Stop the stale process, preserve the worktree, and retry once with the same issue context."
   def suggested_action(:no_json_event_timeout), do: "Treat the app-server stream as unhealthy and restart the session after recording the last raw output."
   def suggested_action(:compaction_stall), do: "Resume the same issue with a compacted workpad summary and do not start unrelated work."
+
+  def suggested_action(:context_window_exceeded),
+    do: "Block the run, compact the issue workpad/thread history, then resume the same logical issue session with bounded context."
+
   def suggested_action(:auth_failure), do: "Block until credentials are restored; do not keep retrying."
   def suggested_action(:permission_denied_loop), do: "Block and surface the denied command or approval request."
   def suggested_action(:required_validation_missing), do: "Block the run and execute the required repo-native validation command before any PR ready or merge handoff."
