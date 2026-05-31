@@ -95,6 +95,10 @@ issue claim. When a run stops, blocks, or reclaims a stale claim on the same
 host, Symphony must terminate that local app-server process tree before another
 attempt can start. Multiple live `codex app-server` launchers for one issue are
 evidence of a Symphony cleanup bug and should pause that issue until fixed.
+If Codex reports `contextWindowExceeded`, Symphony should block immediately with
+that classifier. That is the controlled exception to blindly resuming the same
+physical thread: the next attempt needs an explicit compacted handoff/workpad
+before reusing or replacing the issue-scoped session.
 
 ## Codebase Context Pilot
 

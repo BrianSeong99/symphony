@@ -605,8 +605,14 @@ defmodule SymphonyElixir.Codex.AppServer do
 
     case Jason.decode(payload_string) do
       {:ok, %{"method" => "turn/completed"} = payload} ->
-        emit_turn_event(on_message, :turn_completed, payload, payload_string, port, payload)
-        {:ok, :turn_completed}
+        if completed_turn_failed?(payload) do
+          details = Map.get(payload, "params")
+          emit_turn_event(on_message, :turn_failed, payload, payload_string, port, details)
+          {:error, {:turn_failed, details}}
+        else
+          emit_turn_event(on_message, :turn_completed, payload, payload_string, port, payload)
+          {:ok, :turn_completed}
+        end
 
       {:ok, %{"method" => "turn/failed", "params" => _} = payload} ->
         emit_turn_event(
@@ -687,6 +693,12 @@ defmodule SymphonyElixir.Codex.AppServer do
         )
     end
   end
+
+  defp completed_turn_failed?(%{"params" => %{"turn" => turn}}) when is_map(turn) do
+    Map.get(turn, "status") == "failed" or not is_nil(Map.get(turn, "error"))
+  end
+
+  defp completed_turn_failed?(_payload), do: false
 
   defp emit_turn_event(on_message, event, payload, payload_string, port, payload_details) do
     emit_message(
