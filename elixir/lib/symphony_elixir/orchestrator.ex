@@ -2094,6 +2094,7 @@ defmodule SymphonyElixir.Orchestrator do
           codex_thread_name: codex_thread_name,
           claude_session_id: Map.get(claim, "claude_session_id"),
           claude_session_name: claude_session_name,
+          codex_usage_baseline_pending: resumed_thread_claim?(claim),
           session_id: nil,
           last_codex_message: nil,
           last_codex_timestamp: nil,
@@ -2186,6 +2187,15 @@ defmodule SymphonyElixir.Orchestrator do
       status: "dispatching"
     })
   end
+
+  defp resumed_thread_claim?(claim) when is_map(claim) do
+    case Map.get(claim, "resume_thread_id") do
+      thread_id when is_binary(thread_id) -> String.trim(thread_id) != ""
+      _thread_id -> false
+    end
+  end
+
+  defp resumed_thread_claim?(_claim), do: false
 
   defp dispatch_retry_metadata(metadata) when is_map(metadata), do: metadata
   defp dispatch_retry_metadata(worker_host), do: %{worker_host: worker_host}
@@ -3341,6 +3351,7 @@ defmodule SymphonyElixir.Orchestrator do
         codex_last_reported_cached_input_tokens: max(last_reported_cached_input, token_delta.cached_input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
+        codex_usage_baseline_pending: usage_baseline_pending_for_update(running_entry, token_delta),
         turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
         validation_statuses: validation_statuses,
         classification: effective_classification,
@@ -3376,6 +3387,14 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_mark_session_started(running_entry, _update, _timestamp), do: running_entry
+
+  defp usage_baseline_pending_for_update(_running_entry, %{baseline_applied: true}), do: false
+
+  defp usage_baseline_pending_for_update(running_entry, _token_delta) when is_map(running_entry) do
+    Map.get(running_entry, :codex_usage_baseline_pending, false)
+  end
+
+  defp usage_baseline_pending_for_update(_running_entry, _token_delta), do: false
 
   defp maybe_mark_agent_activity(running_entry, nil, _timestamp), do: running_entry
 
@@ -4081,14 +4100,16 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp extract_token_delta(running_entry, %{event: _, timestamp: _} = update) do
     running_entry = running_entry || %{}
-    usage = extract_token_usage(update)
+    {usage, usage_source} = extract_token_usage(update)
+    baseline_pending? = Map.get(running_entry, :codex_usage_baseline_pending, false) and usage_source == :absolute
 
     input =
       compute_token_delta(
         running_entry,
         :input,
         usage,
-        :codex_last_reported_input_tokens
+        :codex_last_reported_input_tokens,
+        baseline_pending?
       )
 
     cached_input =
@@ -4096,7 +4117,8 @@ defmodule SymphonyElixir.Orchestrator do
         running_entry,
         :cached_input,
         usage,
-        :codex_last_reported_cached_input_tokens
+        :codex_last_reported_cached_input_tokens,
+        baseline_pending?
       )
 
     output =
@@ -4104,7 +4126,8 @@ defmodule SymphonyElixir.Orchestrator do
         running_entry,
         :output,
         usage,
-        :codex_last_reported_output_tokens
+        :codex_last_reported_output_tokens,
+        baseline_pending?
       )
 
     total =
@@ -4112,7 +4135,8 @@ defmodule SymphonyElixir.Orchestrator do
         running_entry,
         :total,
         usage,
-        :codex_last_reported_total_tokens
+        :codex_last_reported_total_tokens,
+        baseline_pending?
       )
 
     %{
@@ -4124,24 +4148,34 @@ defmodule SymphonyElixir.Orchestrator do
       input_reported: input.reported,
       cached_input_reported: cached_input.reported,
       output_reported: output.reported,
-      total_reported: total.reported
+      total_reported: total.reported,
+      baseline_applied: baseline_pending? and Enum.any?([input, cached_input, output, total], &Map.get(&1, :reported?))
     }
   end
 
-  defp compute_token_delta(running_entry, token_key, usage, reported_key) do
+  defp compute_token_delta(running_entry, token_key, usage, reported_key, baseline_pending?) do
     next_total = get_token_usage(usage, token_key)
     prev_reported = Map.get(running_entry, reported_key, 0)
 
     delta =
-      if is_integer(next_total) and next_total >= prev_reported do
-        next_total - prev_reported
-      else
-        0
+      cond do
+        not is_integer(next_total) ->
+          0
+
+        baseline_pending? ->
+          0
+
+        next_total >= prev_reported ->
+          next_total - prev_reported
+
+        true ->
+          0
       end
 
     %{
       delta: max(delta, 0),
-      reported: if(is_integer(next_total), do: next_total, else: prev_reported)
+      reported: if(is_integer(next_total), do: next_total, else: prev_reported),
+      reported?: is_integer(next_total)
     }
   end
 
@@ -4155,9 +4189,16 @@ defmodule SymphonyElixir.Orchestrator do
       update
     ]
 
-    Enum.find_value(payloads, &absolute_token_usage_from_payload/1) ||
-      Enum.find_value(payloads, &turn_completed_usage_from_payload/1) ||
-      %{}
+    cond do
+      absolute = Enum.find_value(payloads, &absolute_token_usage_from_payload/1) ->
+        {absolute, :absolute}
+
+      turn_completed = Enum.find_value(payloads, &turn_completed_usage_from_payload/1) ->
+        {turn_completed, :turn_completed}
+
+      true ->
+        {%{}, :none}
+    end
   end
 
   defp extract_rate_limits(update) do

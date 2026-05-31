@@ -72,6 +72,10 @@ disables the hard total cap so implementation runs can finish real work.
 Startup and no-progress token guards still classify wasteful patterns such as
 full log ingestion, repeated broad context reads, no-progress loops, and
 validation retries that do not change the plan.
+For resumed issue-scoped sessions, token guards are measured against new
+per-run token deltas. Codex may report cumulative thread totals from prior
+attempts; Symphony baselines the first resumed cumulative usage event so an old
+large thread does not instantly fail a fresh retry before doing new work.
 
 For WPRC website, `npm run build` is a required validation command. Symphony
 must observe that command passing in the current run before treating the issue

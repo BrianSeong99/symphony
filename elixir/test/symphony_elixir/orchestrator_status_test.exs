@@ -1522,6 +1522,92 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute Process.alive?(worker_pid)
   end
 
+  test "orchestrator baselines resumed thread token totals before startup budget" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 0,
+      startup_token_window_ms: 60_000,
+      startup_max_total_tokens: 250_000,
+      max_total_tokens: 0
+    )
+
+    issue_id = "issue-resumed-thread-token-baseline"
+    orchestrator_name = Module.concat(__MODULE__, :ResumedThreadTokenBaselineOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "GH-115",
+      issue: %Issue{id: issue_id, identifier: "GH-115", state: "Todo"},
+      workspace_path: nil,
+      session_id: "thread-resumed-turn-1",
+      codex_usage_baseline_pending: true,
+      codex_input_tokens: 0,
+      codex_cached_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_uncached_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_cached_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: DateTime.utc_now(),
+      last_codex_event: :notification,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      token_usage_update(1_053_232, 903_808, 6_516, 1_059_748)
+    })
+
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    assert %{codex_total_tokens: 0, codex_last_reported_total_tokens: 1_059_748} = state.running[issue_id]
+    refute state.running[issue_id].codex_usage_baseline_pending
+    refute Map.has_key?(state.blocked, issue_id)
+    assert Process.alive?(worker_pid)
+
+    send(pid, {
+      :codex_worker_update,
+      issue_id,
+      token_usage_update(1_054_000, 904_000, 6_800, 1_060_800)
+    })
+
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    assert %{codex_total_tokens: 1_052, codex_last_reported_total_tokens: 1_060_800} = state.running[issue_id]
+    refute Map.has_key?(state.blocked, issue_id)
+
+    send(worker_pid, :done)
+  end
+
   test "orchestrator blocks startup with token burn but no visible progress milestone" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -3274,6 +3360,26 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   defp wait_for_snapshot(pid, predicate, timeout_ms \\ 200) when is_function(predicate, 1) do
     deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
     do_wait_for_snapshot(pid, predicate, deadline_ms)
+  end
+
+  defp token_usage_update(input_tokens, cached_input_tokens, output_tokens, total_tokens) do
+    %{
+      event: :notification,
+      timestamp: DateTime.utc_now(),
+      payload: %{
+        method: "thread/tokenUsage/updated",
+        params: %{
+          tokenUsage: %{
+            total: %{
+              inputTokens: input_tokens,
+              cachedInputTokens: cached_input_tokens,
+              outputTokens: output_tokens,
+              totalTokens: total_tokens
+            }
+          }
+        }
+      }
+    }
   end
 
   defp do_wait_for_snapshot(pid, predicate, deadline_ms) do
