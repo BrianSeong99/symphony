@@ -36,6 +36,13 @@ For the current trial, use the workflow examples in `elixir/`:
 Each workflow monitors one repository. Use one runner process per repository
 lane, with separate worktree roots and logs.
 
+Runner token policy is progress-first, not hard-cap-first. The hard total token
+cap is disabled for active GitHub lanes so real builds can finish. Keep
+startup/no-progress guards enabled and high enough to catch empty thinking,
+broad log/cache ingestion, or context burn without blocking useful file edits,
+validation, PR work, and explicit blockers. See
+`config/symphony/runner-budget-policy.yml`.
+
 Each GitHub issue must have exactly one durable Claude Code builder session and
 one durable Codex reviewer session until the issue/PR is terminal. Session names
 must be stable and human-readable:

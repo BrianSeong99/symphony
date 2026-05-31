@@ -75,12 +75,12 @@ agent:
   max_turns: 12
   max_retry_attempts: 3
   no_progress_timeout_ms: 90000
-  no_progress_max_tokens: 120000
+  no_progress_max_tokens: 150000
   startup_token_window_ms: 60000
-  startup_max_total_tokens: 120000
+  startup_max_total_tokens: 250000
   startup_progress_timeout_ms: 60000
-  startup_progress_max_tokens: 100000
-  max_total_tokens: 500000
+  startup_progress_max_tokens: 150000
+  max_total_tokens: 0
   prompt_mode: compact
 codex:
   command: SYMPHONY_GIT_BASE_REF=brian/main SYMPHONY_GIT_PUSH_REMOTE=origin SYMPHONY_GITHUB_REPO=BrianSeong99/symphony SYMPHONY_GITHUB_BASE=main SYMPHONY_RUNNER_ENABLED=false SYMPHONY_SERVER_PORT=0 /Users/brianseong/.local/bin/codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server

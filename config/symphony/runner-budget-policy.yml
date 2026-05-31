@@ -1,0 +1,24 @@
+version: 1
+updated_on: "2026-05-31"
+
+policy:
+  intent: "Let agents finish real implementation work while still catching wasteful loops."
+  hard_total_token_cap:
+    default: disabled
+    workflow_value: 0
+    reason: "A fixed total cap blocks legitimate long builds and reviews."
+  progress_guards:
+    enabled: true
+    no_progress_max_tokens: 150000
+    startup_max_total_tokens: 250000
+    startup_progress_max_tokens: 150000
+    reason: "Stop broad reading or empty thinking only when there is no visible progress."
+  context_ingestion:
+    keep_bounded: true
+    reason: "Context packets should stay compact even when implementation turns can run long."
+
+required_behavior:
+  - "Useful work must emit visible milestones before high token usage."
+  - "Validation, file edits, worktree state, PR links, or blockers count as progress."
+  - "Reading cache, logs, generated files, or dependency trees without a narrow reason does not count as progress."
+  - "Budget stops should preserve the worktree and session identity for diagnosis or retry."

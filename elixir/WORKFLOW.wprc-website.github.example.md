@@ -50,12 +50,12 @@ agent:
   max_turns: 4
   max_retry_attempts: 3
   no_progress_timeout_ms: 90000
-  no_progress_max_tokens: 45000
+  no_progress_max_tokens: 150000
   startup_token_window_ms: 60000
-  startup_max_total_tokens: 60000
+  startup_max_total_tokens: 250000
   startup_progress_timeout_ms: 60000
-  startup_progress_max_tokens: 40000
-  max_total_tokens: 150000
+  startup_progress_max_tokens: 150000
+  max_total_tokens: 0
   required_validation_commands:
     - npm run build
   prompt_mode: compact
