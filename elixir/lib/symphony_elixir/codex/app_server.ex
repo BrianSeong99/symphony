@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   """
 
   require Logger
-  alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, RunnerObserver, SSH}
+  alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, ProcessTree, RunnerObserver, SSH}
 
   @initialize_id 1
   @thread_start_id 2
@@ -65,7 +65,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          }}
       else
         {:error, reason} ->
-          stop_port(port)
+          stop_opened_session(port, metadata, worker_host)
           {:error, reason}
       end
     end
@@ -145,7 +145,27 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   @spec stop_session(session()) :: :ok
+  def stop_session(%{port: port, metadata: metadata, worker_host: nil}) when is_port(port) and is_map(metadata) do
+    stop_port(port)
+    stop_local_process_tree(metadata)
+  end
+
   def stop_session(%{port: port}) when is_port(port) do
+    stop_port(port)
+  end
+
+  defp stop_local_process_tree(metadata) when is_map(metadata) do
+    metadata
+    |> Map.get(:codex_app_server_pid)
+    |> ProcessTree.terminate()
+  end
+
+  defp stop_opened_session(port, metadata, nil) when is_port(port) and is_map(metadata) do
+    stop_port(port)
+    stop_local_process_tree(metadata)
+  end
+
+  defp stop_opened_session(port, _metadata, _worker_host) when is_port(port) do
     stop_port(port)
   end
 

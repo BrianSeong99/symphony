@@ -86,6 +86,11 @@ builder session named `GH-### Symphony Builder` and one Codex reviewer session
 named `GH-### Symphony Reviewer`. Retries, restarts, validation failures, and
 review feedback must resume those sessions. A restart that creates a new chat
 for the same GitHub issue is a runner failure, not normal retry behavior.
+The runner records the active `codex app-server` PID in runtime state and the
+issue claim. When a run stops, blocks, or reclaims a stale claim on the same
+host, Symphony must terminate that local app-server process tree before another
+attempt can start. Multiple live `codex app-server` launchers for one issue are
+evidence of a Symphony cleanup bug and should pause that issue until fixed.
 
 ## Codebase Context Pilot
 

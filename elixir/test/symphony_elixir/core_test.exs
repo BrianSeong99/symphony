@@ -1678,6 +1678,146 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
+  test "agent runner terminates local app-server process tree after a run ends" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-stop-app-server-#{System.unique_integer([:positive])}"
+      )
+
+    previous_pid_file = System.get_env("SYMP_TEST_CODEx_PID_FILE")
+
+    on_exit(fn -> restore_env("SYMP_TEST_CODEx_PID_FILE", previous_pid_file) end)
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+      pid_file = Path.join(test_root, "codex.pid")
+
+      File.mkdir_p!(template_repo)
+      File.mkdir_p!(workspace_root)
+      File.write!(Path.join(template_repo, "README.md"), "# test")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      printf '%s\\n' "$$" > "$SYMP_TEST_CODEx_PID_FILE"
+
+      while IFS= read -r line; do
+        case "$line" in
+          *'"id":1'*)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          *'"id":2'*)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-stop"}}}'
+            ;;
+          *'"id":5'*)
+            printf '%s\\n' '{"id":5,"result":{}}'
+            ;;
+          *'"id":3'*)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-stop"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+        esac
+      done
+
+      sleep 120
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEx_PID_FILE", pid_file)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-stop-app-server",
+        identifier: "MT-STOP",
+        title: "Stop app-server",
+        description: "Ensure app-server process cleanup",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-STOP",
+        labels: []
+      }
+
+      assert :ok =
+               AgentRunner.run(
+                 issue,
+                 nil,
+                 issue_state_fetcher: fn [_issue_id] -> {:ok, [%{issue | state: "Done"}]} end
+               )
+
+      codex_pid = File.read!(pid_file) |> String.trim()
+      refute process_alive_eventually?(codex_pid)
+    after
+      restore_env("SYMP_TEST_CODEx_PID_FILE", previous_pid_file)
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server terminates local process tree after startup failure" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-startup-failure-#{System.unique_integer([:positive])}"
+      )
+
+    previous_pid_file = System.get_env("SYMP_TEST_CODEx_PID_FILE")
+
+    on_exit(fn -> restore_env("SYMP_TEST_CODEx_PID_FILE", previous_pid_file) end)
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "issue")
+      codex_binary = Path.join(test_root, "fake-codex")
+      pid_file = Path.join(test_root, "codex.pid")
+
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      printf '%s\\n' "$$" > "$SYMP_TEST_CODEx_PID_FILE"
+
+      while IFS= read -r line; do
+        case "$line" in
+          *'"id":1'*)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          *'"id":2'*)
+            printf '%s\\n' '{"id":2,"result":{"thread":{}}}'
+            ;;
+        esac
+      done
+
+      sleep 120
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEx_PID_FILE", pid_file)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      assert {:error, {:invalid_thread_payload, %{}}} = AppServer.start_session(workspace)
+
+      codex_pid = File.read!(pid_file) |> String.trim()
+      refute process_alive_eventually?(codex_pid)
+    after
+      restore_env("SYMP_TEST_CODEx_PID_FILE", previous_pid_file)
+      File.rm_rf(test_root)
+    end
+  end
+
   test "agent runner surfaces ssh startup failures instead of silently hopping hosts" do
     test_root =
       Path.join(
@@ -2331,5 +2471,27 @@ defmodule SymphonyElixir.CoreTest do
     after
       File.rm_rf(test_root)
     end
+  end
+
+  defp process_alive_eventually?(pid, attempts \\ 20)
+
+  defp process_alive_eventually?(pid, attempts) when attempts > 0 do
+    if process_alive?(pid) do
+      Process.sleep(50)
+      process_alive_eventually?(pid, attempts - 1)
+    else
+      false
+    end
+  end
+
+  defp process_alive_eventually?(pid, 0), do: process_alive?(pid)
+
+  defp process_alive?(pid) when is_binary(pid) do
+    case System.cmd("kill", ["-0", pid], stderr_to_stdout: true) do
+      {_output, 0} -> true
+      _ -> false
+    end
+  rescue
+    _error -> false
   end
 end
