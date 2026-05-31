@@ -59,16 +59,17 @@ The runner guardrails remain active:
 
 - `max_retry_attempts: 3`
 - `required_validation_commands` for repos that need a hard ready/merge gate
-- `startup_token_window_ms: 15000`
-- `startup_max_total_tokens: 150000`
+- `startup_token_window_ms` per workflow
+- `startup_max_total_tokens: 250000`
 - `startup_progress_timeout_ms: 60000`
-- `startup_progress_max_tokens: 100000`
-- `max_total_tokens: 500000`
+- `startup_progress_max_tokens: 150000`
+- `max_total_tokens: 0`
 - no-progress timeout and token classifiers
 - mandatory git worktree check before each run
 
-These budgets are runaway guards, not quality ceilings. The runner should spend
-what the task needs for good work, while classifying wasteful patterns such as
+These budgets are runaway guards, not quality ceilings. `max_total_tokens: 0`
+disables the hard total cap so implementation runs can finish real work.
+Startup and no-progress token guards still classify wasteful patterns such as
 full log ingestion, repeated broad context reads, no-progress loops, and
 validation retries that do not change the plan.
 

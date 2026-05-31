@@ -123,12 +123,12 @@ defmodule SymphonyElixir.CoreTest do
     refute Map.get(hooks, "after_create") =~ "deps.get"
     assert Map.get(hooks, "before_run") =~ "git rev-parse --git-dir"
     assert Map.get(agent, "no_progress_timeout_ms") == 90_000
-    assert Map.get(agent, "no_progress_max_tokens") == 120_000
+    assert Map.get(agent, "no_progress_max_tokens") == 150_000
     assert Map.get(agent, "startup_token_window_ms") == 60_000
-    assert Map.get(agent, "startup_max_total_tokens") == 120_000
+    assert Map.get(agent, "startup_max_total_tokens") == 250_000
     assert Map.get(agent, "startup_progress_timeout_ms") == 60_000
-    assert Map.get(agent, "startup_progress_max_tokens") == 100_000
-    assert Map.get(agent, "max_total_tokens") == 500_000
+    assert Map.get(agent, "startup_progress_max_tokens") == 150_000
+    assert Map.get(agent, "max_total_tokens") == 0
     assert Map.get(agent, "prompt_mode") == "compact"
     assert Map.get(codex, "command") =~ "--dangerously-bypass-approvals-and-sandbox"
     assert Map.get(codex, "command") =~ "SYMPHONY_GIT_BASE_REF=brian/main"
